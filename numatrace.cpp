@@ -308,14 +308,15 @@ VOID Routine(RTN rtn, VOID *v)
 
 VOID Trace(TRACE trace, VOID *v)
 {
+	TRACE_InsertCall(trace, IPOINT_BEFORE, (AFUNPTR)timestamp, IARG_THREAD_ID, IARG_END);
     // Visit every basic block  in the trace
-    for (BBL bbl = TRACE_BblHead(trace); BBL_Valid(bbl); bbl = BBL_Next(bbl))
+  /*  for (BBL bbl = TRACE_BblHead(trace); BBL_Valid(bbl); bbl = BBL_Next(bbl))
     {
         // Insert a call to docount for every bbl, passing the number of instructions.
         // IPOINT_ANYWHERE allows Pin to schedule the call anywhere in the bbl to obtain best performance.
         
         BBL_InsertCall(bbl, IPOINT_ANYWHERE, (AFUNPTR)timestamp, IARG_THREAD_ID, IARG_END);
-    }
+    }*/
 }
 
    
