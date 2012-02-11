@@ -122,7 +122,7 @@ typedef struct RtnName
     struct RtnName * _next;
 } RTN_NAME;
 
-typedef struct MemEvent {
+struct MemEvent {
 	bool read;
 	ADDRINT  addr;
 };
@@ -199,29 +199,9 @@ VOID ThreadStop(THREADID tid, const CONTEXT *ctxt, INT32 code, VOID *v)
 }
 
  
-VOID Arg1Before(CHAR * name, ADDRINT size, THREADID threadid)
-{
-	// output format
-	// threadID malloc/free
-	GetLock(&lock, threadid+1);
-    MallocFile << threadid << " " << name << " " << size << endl;
-	ReleaseLock(&lock);
-}
 
 
-VOID MallocAfter(ADDRINT ret, THREADID threadid)
-{
-	GetLock(&lock, threadid+1);
-    MallocFile << threadid << " returns " << ret << endl;
-	ReleaseLock(&lock);
-}
 
-// This function is called before every block
-VOID printStack(ADDRINT funcAddress, THREADID threadid, ADDRINT sp, CHAR type) { 
-	GetLock(&lock, threadid+1);
-	MallocFile << "thread: " << threadid << " " << funcAddress << " " << type << " sp: " << sp << endl;
-	ReleaseLock(&lock);
-}
 
 //http://stackoverflow.com/questions/2333728/stdmap-default-value
 template <typename K, typename V>
@@ -243,7 +223,7 @@ VOID timestamp(THREADID tid) {
 		std::set<void*> pages;
 		std::map<void*,int> page_reads;
 		std::map<void*,int> page_writes;
-		for (int i = 0; i < tdata->_count; i++) {
+		for (int i = 0; i < (int)tdata->_count; i++) {
 			// http://stackoverflow.com/questions/6387771/get-starting-address-of-a-memory-page-in-linux
 			void* page = (void*)((unsigned long long)memEvents[tid][i].addr & ~(pagesize-1));
 			pages.insert(page);
@@ -275,9 +255,16 @@ VOID timestamp(THREADID tid) {
 
 
 // Print a memory read access
-VOID PIN_FAST_ANALYSIS_CALL RecordMem(VOID * ip, ADDRINT  addr, THREADID threadid, int type) {
+VOID PIN_FAST_ANALYSIS_CALL RecordMemRead(ADDRINT  addr, THREADID threadid) {
 	thread_data_t* tdata = get_tls(threadid);
-    memEvents[threadid][tdata->_count].read = type;
+    memEvents[threadid][tdata->_count].read = 1;
+	memEvents[threadid][tdata->_count].addr = addr;
+	tdata->_count = (tdata->_count + 1) ;
+}
+
+VOID PIN_FAST_ANALYSIS_CALL RecordMemWrite(ADDRINT  addr, THREADID threadid) {
+	thread_data_t* tdata = get_tls(threadid);
+    memEvents[threadid][tdata->_count].read = 0;
 	memEvents[threadid][tdata->_count].addr = addr;
 	tdata->_count = (tdata->_count + 1) ;
 }
@@ -298,12 +285,6 @@ VOID Routine(RTN rtn, VOID *v)
     rc->_image = StripPath(IMG_Name(SEC_Img(RTN_Sec(rtn))).c_str());
     rc->_address = RTN_Address(rtn);
 	MallocFile << rc->_address << " " << rc->_image.c_str() << " " << rc->_name.c_str() << endl;
-   
-    RTN_Open(rtn);
-    // Insert a call at the entry point of a routine to increment the call count
-    RTN_InsertCall(rtn, IPOINT_BEFORE, (AFUNPTR)printStack,IARG_PTR, RTN_Address(rtn), IARG_THREAD_ID, IARG_REG_VALUE, REG_STACK_PTR,   IARG_UINT32, 0, IARG_END);
-	RTN_InsertCall(rtn, IPOINT_AFTER, (AFUNPTR)printStack,IARG_PTR, RTN_Address(rtn), IARG_THREAD_ID, IARG_REG_VALUE, REG_STACK_PTR,   IARG_UINT32, 1, IARG_END);
-    RTN_Close(rtn);
 }
 
 VOID Trace(TRACE trace, VOID *v)
@@ -337,13 +318,11 @@ VOID Instruction(INS ins, VOID *v)
         if (INS_MemoryOperandIsRead(ins, memOp))
         {
             INS_InsertPredicatedCall(
-                ins, IPOINT_BEFORE, (AFUNPTR)RecordMem,
+                ins, IPOINT_BEFORE, (AFUNPTR)RecordMemRead,
 				IARG_FAST_ANALYSIS_CALL,
-				IARG_INST_PTR,
-                IARG_MEMORYOP_EA, memOp, 
+	            IARG_MEMORYOP_EA, memOp, 
 				IARG_THREAD_ID,
-				IARG_ADDRINT, 0,
-                IARG_END);
+				IARG_END);
         }
         // Note that in some architectures a single memory operand can be 
         // both read and written (for instance incl (%eax) on IA-32)
@@ -351,13 +330,11 @@ VOID Instruction(INS ins, VOID *v)
         if (INS_MemoryOperandIsWritten(ins, memOp))
         {
             INS_InsertPredicatedCall(
-                ins, IPOINT_BEFORE, (AFUNPTR)RecordMem,
+                ins, IPOINT_BEFORE, (AFUNPTR)RecordMemWrite,
 				IARG_FAST_ANALYSIS_CALL,
-				IARG_INST_PTR,
-                IARG_MEMORYOP_EA, memOp, 
+			    IARG_MEMORYOP_EA, memOp, 
 				IARG_THREAD_ID,
-				IARG_ADDRINT, 1,
-                IARG_END);
+				IARG_END);
         }
     }
 }
@@ -421,8 +398,7 @@ int main(int argc, char *argv[])
     PIN_AddThreadStartFunction(ThreadStart, 0);
 	PIN_AddThreadFiniFunction(ThreadStop, 0);
 
-    // Register Routine to be called to instrument rtn
- //   RTN_AddInstrumentFunction(Routine, 0);
+
 
     // Never returns
 	gettimeofday(&start, NULL);
