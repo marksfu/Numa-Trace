@@ -203,10 +203,14 @@ V GetWithDef(const  std::map <K,V> & m, const K & key, const V & defval ) {
    }
 }
 
+ADDRINT CheckCutoff(THREADID tid) {
+	thread_data_t& tdata = local[tid];
+	return (tdata._count > SAFTY_CUT);
+}
+
 VOID timestamp(THREADID tid) { 
 	thread_data_t& tdata = local[tid];
    	boost::iostreams::filtering_ostream& ThreadStream = tdata.ThreadStream;
-	if (tdata._count > SAFTY_CUT) {
 		std::set<void*> pages;
 		std::map<void*,int> page_reads;
 		std::map<void*,int> page_writes;
@@ -236,7 +240,6 @@ VOID timestamp(THREADID tid) {
 		}
 		
 		tdata._count = 0;
-	}
 
 }
 
@@ -278,7 +281,8 @@ VOID Routine(RTN rtn, VOID *v)
 
 VOID Trace(TRACE trace, VOID *v)
 {
-	TRACE_InsertCall(trace, IPOINT_BEFORE, (AFUNPTR)timestamp, IARG_THREAD_ID, IARG_END);
+	TRACE_InsertIfCall(trace, IPOINT_BEFORE, (AFUNPTR)CheckCutoff, IARG_THREAD_ID, IARG_END);
+	TRACE_InsertThenCall(trace, IPOINT_BEFORE, (AFUNPTR)timestamp, IARG_THREAD_ID, IARG_END);
 }
 
    
