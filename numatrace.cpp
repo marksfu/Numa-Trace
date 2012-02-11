@@ -100,19 +100,6 @@ class thread_data_t
     UINT8 _pad[PADSIZE];
 };
 
-
-// key for accessing TLS storage in the threads. initialized once in main()
-static  TLS_KEY tls_key;
-
-// function to access thread-specific data
-thread_data_t* get_tls(THREADID threadid)
-{
-    thread_data_t* tdata = 
-          static_cast<thread_data_t*>(PIN_GetThreadData(tls_key, threadid));
-    return tdata;
-}
-
-
 typedef struct RtnName
 {
     string _name;
@@ -146,7 +133,9 @@ struct timeval start;
 
 std::vector<MemEvent*> memEvents;
 
-#define MAX_THREADS 25
+#define MAX_THREADS 1024
+
+thread_data_t local[MAX_THREADS];
 #define MAX_EVENTS 10000
 #define SAFTY_CUT 9900
 
@@ -175,9 +164,9 @@ KNOB<string> KnobOutputFile(KNOB_MODE_WRITEONCE, "pintool",
 VOID ThreadStart(THREADID threadid, CONTEXT *ctxt, INT32 flags, VOID *v)
 {
     GetLock(&lock, threadid+1);
-	thread_data_t* tdata = new thread_data_t;
-	
-	boost::iostreams::filtering_ostream& ThreadStream = tdata->ThreadStream;
+	thread_data_t& tdata = local[threadid];
+	tdata._count = 0;	
+	boost::iostreams::filtering_ostream& ThreadStream = tdata.ThreadStream;
 	char file[80];
 	sprintf(file, "thread_%i.dat.gz", threadid);
 
@@ -186,14 +175,13 @@ VOID ThreadStart(THREADID threadid, CONTEXT *ctxt, INT32 flags, VOID *v)
 	MallocFile << threadid << " basePtr " << PIN_GetContextReg(ctxt, REG_STACK_PTR) << endl;
 	memEvents.push_back( (MemEvent*)malloc(MAX_EVENTS * sizeof(MemEvent)) );
     
-    PIN_SetThreadData(tls_key, tdata, threadid);
     ReleaseLock(&lock);
 }
 
 VOID ThreadStop(THREADID tid, const CONTEXT *ctxt, INT32 code, VOID *v)
 {
-	thread_data_t* tdata = get_tls(tid);
-	boost::iostreams::filtering_ostream& ThreadStream = tdata->ThreadStream;
+	thread_data_t& tdata = local[tid];
+	boost::iostreams::filtering_ostream& ThreadStream = tdata.ThreadStream;
 	boost::iostreams::close(ThreadStream);
 	
 }
@@ -216,14 +204,13 @@ V GetWithDef(const  std::map <K,V> & m, const K & key, const V & defval ) {
 }
 
 VOID timestamp(THREADID tid) { 
-	thread_data_t* tdata = get_tls(tid);
-    tdata->_count = (tdata->_count + 1) ;
-	boost::iostreams::filtering_ostream& ThreadStream = tdata->ThreadStream;
-	if (tdata->_count > SAFTY_CUT) {
+	thread_data_t& tdata = local[tid];
+   	boost::iostreams::filtering_ostream& ThreadStream = tdata.ThreadStream;
+	if (tdata._count > SAFTY_CUT) {
 		std::set<void*> pages;
 		std::map<void*,int> page_reads;
 		std::map<void*,int> page_writes;
-		for (int i = 0; i < (int)tdata->_count; i++) {
+		for (int i = 0; i < (int)tdata._count; i++) {
 			// http://stackoverflow.com/questions/6387771/get-starting-address-of-a-memory-page-in-linux
 			void* page = (void*)((unsigned long long)memEvents[tid][i].addr & ~(pagesize-1));
 			pages.insert(page);
@@ -248,7 +235,7 @@ VOID timestamp(THREADID tid) {
 			ThreadStream << ((unsigned long long)(*it))/pagesize << "\t" << status[0] << "\t" << GetWithDef(page_reads, *it, 0) << "\t" << GetWithDef(page_writes, *it, 0) << "\n";
 		}
 		
-		tdata->_count = 0;
+		tdata._count = 0;
 	}
 
 }
@@ -256,17 +243,19 @@ VOID timestamp(THREADID tid) {
 
 // Print a memory read access
 VOID PIN_FAST_ANALYSIS_CALL RecordMemRead(ADDRINT  addr, THREADID threadid) {
-	thread_data_t* tdata = get_tls(threadid);
-    memEvents[threadid][tdata->_count].read = 1;
-	memEvents[threadid][tdata->_count].addr = addr;
-	tdata->_count = (tdata->_count + 1) ;
+	thread_data_t& tdata = local[threadid];
+    memEvents[threadid][tdata._count].read = 1;
+	memEvents[threadid][tdata._count].addr = addr;
+	tdata._count = (tdata._count + 1) ;
 }
 
 VOID PIN_FAST_ANALYSIS_CALL RecordMemWrite(ADDRINT  addr, THREADID threadid) {
-	thread_data_t* tdata = get_tls(threadid);
-    memEvents[threadid][tdata->_count].read = 0;
-	memEvents[threadid][tdata->_count].addr = addr;
-	tdata->_count = (tdata->_count + 1) ;
+	thread_data_t& tdata = local[threadid];
+//	thread_data_t* tdata = get_tls(threadid);
+    memEvents[threadid][tdata._count].read = 0;
+	memEvents[threadid][tdata._count].addr = addr;
+	tdata._count = (tdata._count + 1) ;
+
 }
 
 /* ===================================================================== */
@@ -371,9 +360,7 @@ int main(int argc, char *argv[])
 	// Initialize the pin lock
     InitLock(&lock);
 
-	 // Obtain  a key for TLS storage.
-    tls_key = PIN_CreateThreadDataKey(0);
-    
+ 
     // Write to a file since cout and cerr maybe closed by the application
     MallocFile.open(KnobOutputFile.Value().c_str());
   //  MallocFile << hex;
