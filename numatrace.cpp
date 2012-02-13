@@ -64,6 +64,8 @@ PAGE_ID	Status[-ERROR]/NUMA_NODE[0-N]	READS	WRITES
 #include <set>
 
 
+#ifdef COMPRESS_STREAM
+
 // sudo aptget install libboost-iostreams-dev
 // -lboost_iostreams
 #include <boost/iostreams/filtering_streambuf.hpp>
@@ -71,6 +73,8 @@ PAGE_ID	Status[-ERROR]/NUMA_NODE[0-N]	READS	WRITES
 #include <boost/iostreams/copy.hpp>
 #include <boost/iostreams/filter/gzip.hpp>
 #include <boost/iostreams/device/file.hpp> // for file_sink
+
+#endif
 
 /* ===================================================================== */
 /* Names of malloc and free */
@@ -97,7 +101,12 @@ class thread_data_t
   public:
     thread_data_t() : _count(0) {}
     UINT64 _count;
+
+#ifdef COMPRESS_STREAM
 	boost::iostreams::filtering_ostream ThreadStream;
+#else
+	ofstream ThreadStream;
+#endif
     UINT8 _pad[PADSIZE];
 };
 
@@ -167,12 +176,16 @@ VOID ThreadStart(THREADID threadid, CONTEXT *ctxt, INT32 flags, VOID *v)
     GetLock(&lock, threadid+1);
 	thread_data_t& tdata = local[threadid];
 	tdata._count = 0;	
-	boost::iostreams::filtering_ostream& ThreadStream = tdata.ThreadStream;
 	char file[80];
+#ifdef COMPRESS_STREAM
 	sprintf(file, "thread_%i.dat.gz", threadid);
-
+	boost::iostreams::filtering_ostream& ThreadStream = tdata.ThreadStream;
 	ThreadStream.push(boost::iostreams::gzip_compressor()); 
 	ThreadStream.push(boost::iostreams::file_sink(file, ios_base::out | ios_base::binary));
+#else
+	sprintf(file, "thread_%i.dat", threadid);
+	tdata.ThreadStream.open(file);
+#endif
 	MallocFile << threadid << " basePtr " << PIN_GetContextReg(ctxt, REG_STACK_PTR) << endl;
 	memEvents.push_back( (MemEvent*)malloc(MAX_EVENTS * sizeof(MemEvent)) );
     
@@ -182,9 +195,13 @@ VOID ThreadStart(THREADID threadid, CONTEXT *ctxt, INT32 flags, VOID *v)
 VOID ThreadStop(THREADID tid, const CONTEXT *ctxt, INT32 code, VOID *v)
 {
 	thread_data_t& tdata = local[tid];
+#ifdef COMPRESS_STREAM
 	boost::iostreams::filtering_ostream& ThreadStream = tdata.ThreadStream;
 	boost::iostreams::close(ThreadStream);
-	
+#else
+	tdata.ThreadStream.close();
+#endif
+
 }
 
  
@@ -212,37 +229,40 @@ ADDRINT CheckCutoff(THREADID tid) {
 VOID timestamp(THREADID tid) { 
 	thread_data_t& tdata = local[tid];
 	assert((tdata._count < MAX_EVENTS) && "buffer overflow for page access; increase MAX_EVENTS constant");
+#ifdef COMPRESS_STREAM
    	boost::iostreams::filtering_ostream& ThreadStream = tdata.ThreadStream;
-		std::set<void*> pages;
-		std::map<void*,int> page_reads;
-		std::map<void*,int> page_writes;
-		for (int i = 0; i < (int)tdata._count; i++) {
-			// http://stackoverflow.com/questions/6387771/get-starting-address-of-a-memory-page-in-linux
-			void* page = (void*)((unsigned long long)memEvents[tid][i].addr & ~(pagesize-1));
-			pages.insert(page);
-			if (memEvents[tid][i].read) {
-				page_reads[page] = GetWithDef(page_reads, page, 0) + 1;
-			} else {
-				page_writes[page] = GetWithDef(page_writes, page, 0) + 1;
-			}
+#else
+	ofstream& ThreadStream = tdata.ThreadStream;
+#endif
+	std::set<void*> pages;
+	std::map<void*,int> page_reads;
+	std::map<void*,int> page_writes;
+	for (int i = 0; i < (int)tdata._count; i++) {
+		// http://stackoverflow.com/questions/6387771/get-starting-address-of-a-memory-page-in-linux
+		void* page = (void*)((unsigned long long)memEvents[tid][i].addr & ~(pagesize-1));
+		pages.insert(page);
+		if (memEvents[tid][i].read) {
+			page_reads[page] = GetWithDef(page_reads, page, 0) + 1;
+		} else {
+			page_writes[page] = GetWithDef(page_writes, page, 0) + 1;
 		}
-		int cpuid = sched_getcpu();
-		struct timeval stamp;
-		gettimeofday(&stamp, NULL);
-		// print core and time stamp
-		ThreadStream << cpuid << "\t" << stamp.tv_sec - start.tv_sec << "\t" << stamp.tv_usec << endl;
-		// print page node read writes
-		for (std::set<void*>::iterator it = pages.begin(); it != pages.end(); it++) {
-			int status[1];
-			status[0]=-1;
-			void * ptr_to_check = *it;
-			move_pages(0 /*self memory */, 1, &ptr_to_check,  NULL, status, 0);
-			
-			ThreadStream << ((unsigned long long)(*it))/pagesize << "\t" << status[0] << "\t" << GetWithDef(page_reads, *it, 0) << "\t" << GetWithDef(page_writes, *it, 0) << "\n";
-		}
+	}
+	int cpuid = sched_getcpu();
+	struct timeval stamp;
+	gettimeofday(&stamp, NULL);
+	// print core and time stamp
+	ThreadStream << cpuid << "\t" << stamp.tv_sec - start.tv_sec << "\t" << stamp.tv_usec << endl;
+	// print page node read writes
+	for (std::set<void*>::iterator it = pages.begin(); it != pages.end(); it++) {
+		int status[1];
+		status[0]=-1;
+		void * ptr_to_check = *it;
+		move_pages(0 /*self memory */, 1, &ptr_to_check,  NULL, status, 0);
 		
-		tdata._count = 0;
-
+		ThreadStream << ((unsigned long long)(*it))/pagesize << "\t" << status[0] << "\t" << GetWithDef(page_reads, *it, 0) << "\t" << GetWithDef(page_writes, *it, 0) << "\n";
+	}
+		
+	tdata._count = 0;
 }
 
 

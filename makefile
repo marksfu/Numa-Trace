@@ -8,6 +8,13 @@
 #
 ##############################################################
 
+LIBS = -lnuma
+
+ifdef COMPRESS_STREAM
+	LIBS += -lboost_iostreams
+	CXXFLAGS += -DCOMPRESS_STREAM
+endif
+
 TARGET_COMPILER?=gnu
 ifdef OS
     ifeq (${OS},Windows_NT)
@@ -52,7 +59,7 @@ $(OBJDIR)%.o : %.cpp
 	$(CXX) ${COPT} $(CXXFLAGS) $(PIN_CXXFLAGS) ${OUTOPT}$@ $<
 $(TOOLS): $(PIN_LIBNAMES)
 $(TOOLS): %$(PINTOOL_SUFFIX) : %.o
-	${PIN_LD} $(PIN_LDFLAGS) $(LINK_DEBUG) ${LINK_OUT}$@ $< ${PIN_LPATHS} -lboost_iostreams -lnuma $(PIN_LIBS) $(DBG)
+	${PIN_LD} $(PIN_LDFLAGS) $(LINK_DEBUG) ${LINK_OUT}$@ $< ${PIN_LPATHS} $(LIBS) $(PIN_LIBS) $(DBG)
 
 ## cleaning
 clean:
