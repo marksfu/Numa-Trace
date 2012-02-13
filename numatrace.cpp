@@ -58,6 +58,7 @@ PAGE_ID	Status[-ERROR]/NUMA_NODE[0-N]	READS	WRITES
 #include <unistd.h>
 #include <numaif.h>
 
+#include <assert.h>
 #include <map>
 #include <vector>
 #include <set>
@@ -210,6 +211,7 @@ ADDRINT CheckCutoff(THREADID tid) {
 
 VOID timestamp(THREADID tid) { 
 	thread_data_t& tdata = local[tid];
+	assert((tdata._count < MAX_EVENTS) && "buffer overflow for page access; increase MAX_EVENTS constant");
    	boost::iostreams::filtering_ostream& ThreadStream = tdata.ThreadStream;
 		std::set<void*> pages;
 		std::map<void*,int> page_reads;
