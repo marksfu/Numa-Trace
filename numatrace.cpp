@@ -32,6 +32,7 @@ END_LEGAL */
 
 
 /*
+Mark Roth (mr.mark.roth@gmail.com / mroth@sfu.ca)
 
 Will write a separate trace file for each thread. Output format
 is the following. Each line will contain either 3 or 4 items
@@ -76,42 +77,34 @@ PAGE_ID	Status[-ERROR]/NUMA_NODE[0-N]	READS	WRITES
 
 #endif
 
-/* ===================================================================== */
-/* Names of malloc and free */
-/* ===================================================================== */
-#if defined(TARGET_MAC)
-#define MALLOC "_malloc"
-#define FREE "_free"
-#else
-#define MALLOC "malloc"
-#define FREE "free"
-#endif
-
 
 
 
 // Force each thread's data to be in its own data cache line so that
 // multiple threads do not contend for the same data cache line.
 // This avoids the false sharing problem.
-#define PADSIZE 56  // 64 byte line size: 64-8
+#define PADSIZE 64  // 64 byte line size
 
 // a running count of the instructions
-class thread_data_t
-{
-  public:
-    thread_data_t() : _count(0) {}
-    UINT64 _count;
+class thread_data_t {
+public:
+	thread_data_t() : _count(0) {}
+	UINT64 _count;
 
 #ifdef COMPRESS_STREAM
 	boost::iostreams::filtering_ostream ThreadStream;
 #else
 	ofstream ThreadStream;
 #endif
-    UINT8 _pad[PADSIZE];
+	UINT8 _pad[PADSIZE];
 };
 
-typedef struct RtnName
-{
+struct MemEvent {
+	bool read;
+	ADDRINT  addr;
+};
+
+typedef struct RtnName {
     string _name;
     string _image;
     ADDRINT _address;
@@ -119,29 +112,24 @@ typedef struct RtnName
     struct RtnName * _next;
 } RTN_NAME;
 
-struct MemEvent {
-	bool read;
-	ADDRINT  addr;
-};
-
-
-const char * StripPath(const char * path)
-{
-    const char * file = strrchr(path,'/');
-    if (file)
-        return file+1;
-    else
-        return path;
+const char * StripPath(const char * path) {
+	const char * file = strrchr(path,'/');
+	if (file) {
+		return file+1;
+	} else {
+		return path;
+	}    
 }
 
-int pagesize;
-struct timeval start;
+
 
 /* ===================================================================== */
 /* Global Variables */
 /* ===================================================================== */
 
 std::vector<MemEvent*> memEvents;
+int pagesize;
+struct timeval start;
 
 #define MAX_THREADS 1024
 
