@@ -1,0 +1,14 @@
+.DS_Store
+._*.*
+*.dot*
+*.png
+*.*~
+data/
+*.txt
+*.pdf
+*~
+*.out
+*.dat
+*.dat.gz
+*.log
+obj-intel64/
