@@ -89,7 +89,7 @@ PAGE_ID	Status[-ERROR]/NUMA_NODE[0-N]	READS	WRITES
 class thread_data_t {
 public:
 	thread_data_t() : _count(0) {}
-	UINT64 _count;
+	int _count;
 
 #ifdef COMPRESS_STREAM
 	boost::iostreams::filtering_ostream ThreadStream;
@@ -134,8 +134,11 @@ struct timeval start;
 
 
 std::vector<thread_data_t*> localStore;
-#define MAX_EVENTS 10000
-#define SAFTY_CUT 9900
+#define DEFAULT_BUFFER "10000"
+#define DEFAULT_RUNOVER "1000"
+
+int bufferTriggerSize;
+int bufferArraySize;
 
 std::ofstream MallocFile;
 PIN_LOCK lock;
@@ -146,6 +149,13 @@ PIN_LOCK lock;
 
 KNOB<string> KnobOutputFile(KNOB_MODE_WRITEONCE, "pintool",
                             "m", "malloctrace.out", "specify malloc trace file name");
+
+KNOB<int> KnobBufferSize(KNOB_MODE_WRITEONCE, "pintool",
+                         "b", DEFAULT_BUFFER, "specify buffer size. Default 10000");
+
+KNOB<int> KnobRunOverSize(KNOB_MODE_WRITEONCE, "pintool",
+                         "r", DEFAULT_BUFFER, "specify buffer runover, this needs to be greater than the number of potential memory accesses at the trace level. Default 1000");
+
 
 /* ===================================================================== */
 
@@ -176,7 +186,8 @@ VOID ThreadStart(THREADID threadid, CONTEXT *ctxt, INT32 flags, VOID *v) {
 	tdata->ThreadStream.open(file);
 #endif
 	MallocFile << threadid << " basePtr " << PIN_GetContextReg(ctxt, REG_STACK_PTR) << endl;
-	memEvents.push_back( (MemEvent*)malloc(MAX_EVENTS * sizeof(MemEvent)) );
+	// bufferArraySize defined as global
+	memEvents.push_back( (MemEvent*)malloc(bufferArraySize * sizeof(MemEvent)) );
 
 	ReleaseLock(&lock);
 }
@@ -210,12 +221,12 @@ V GetWithDef(const  std::map <K,V> & m, const K & key, const V & defval ) {
 
 ADDRINT CheckCutoff(THREADID tid) {
 	thread_data_t* tdata = localStore[tid];
-	return (tdata->_count > SAFTY_CUT);
+	return (tdata->_count > bufferTriggerSize);
 }
 
 VOID timestamp(THREADID tid) {
 	thread_data_t* tdata = localStore[tid];
-	assert((tdata->_count < MAX_EVENTS) && "buffer overflow for page access; increase MAX_EVENTS constant");
+	assert((tdata->_count < bufferArraySize) && "buffer overflow for page access; increase MAX_EVENTS constant");
 #ifdef COMPRESS_STREAM
 	boost::iostreams::filtering_ostream& ThreadStream = tdata->ThreadStream;
 #else
@@ -362,7 +373,8 @@ int main(int argc, char *argv[]) {
 
 	// Initialize the pin lock
 	InitLock(&lock);
-
+	bufferTriggerSize = KnobBufferSize.Value() ;
+	bufferArraySize = bufferTriggerSize + KnobRunOverSize.Value();
 
 	// Write to a file since cout and cerr maybe closed by the application
 	MallocFile.open(KnobOutputFile.Value().c_str());
