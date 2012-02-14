@@ -113,6 +113,11 @@ struct MEMREF
     ADDRINT ea;
 };
 
+struct MEMCNT {
+	int read;
+	int write;
+};
+
 // The buffer ID returned by the one call to PIN_DefineTraceBuffer
 BUFFER_ID bufId;
 
@@ -264,29 +269,34 @@ VOID * BufferFull(BUFFER_ID id, THREADID tid, const CONTEXT *ctxt, VOID *buf,
 	}
 	
     struct MEMREF * memref=(struct MEMREF*)buf;
-    
-		std::set<void*> pages;
-		std::map<void*,int> page_reads;
-		std::map<void*,int> page_writes;
+    std::map<void*, MEMCNT> pages;
 	UINT64 until = numElements;
     for(UINT64 i=0; i<until; i++, memref++)
     {
 		void* page = (void*)((unsigned long long)(memref->ea) & ~(pagesize-1));
-		pages.insert(page);
+		std::map<void*, MEMCNT>::iterator it = pages.find( page );
+		if ( it == pages.end() ) {
+			MEMCNT tmp;
+			tmp.read = 0;
+			tmp.write = 0;
+			pages[page] = tmp;
+			it = pages.find( page );
+		} 
+		MEMCNT& pageCnt = it->second;
 		if (memref->read) {
-			page_reads[page] = GetWithDef(page_reads, page, 0) + 1;
+			pageCnt.read += 1;
 		} else {
-			page_writes[page] = GetWithDef(page_writes, page, 0) + 1;
+			pageCnt.write += 1;
 		}
         
     }
-	for (std::set<void*>::iterator it = pages.begin(); it != pages.end(); it++) {
+	for (std::map<void*, MEMCNT>::iterator it = pages.begin(); it != pages.end(); it++) {
 		int status[1];
 		status[0]=-1;
-		void * ptr_to_check = *it;
+		void * ptr_to_check = it->first;
 		move_pages(0 /*self memory */, 1, &ptr_to_check,  NULL, status, 0);
 
-		ThreadStream << ((unsigned long long)(*it))/pagesize << "\t" << status[0] << "\t" << GetWithDef(page_reads, *it, 0) << "\t" << GetWithDef(page_writes, *it, 0) << "\n";
+		ThreadStream << ((unsigned long long)(it->first))/pagesize << "\t" << status[0] << "\t" << it->second.read << "\t" << it->second.write << "\n";
 	}
   //  _numElementsProcessed += (UINT32)until;
     
