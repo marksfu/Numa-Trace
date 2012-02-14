@@ -53,8 +53,33 @@ END_LEGAL */
 
 #include "pin.H"
 #include "portability.H"
+
+#include <sys/time.h>
+#include <vector>
+#include <map>
+#include <vector>
+#include <set>
+#include <unistd.h>
+#include <numaif.h>
+
+
+#include <iostream>
+#include <fstream>
+#ifdef COMPRESS_STREAM
+
+// sudo aptget install libboost-iostreams-dev
+// -lboost_iostreams
+#include <boost/iostreams/filtering_streambuf.hpp>
+#include <boost/iostreams/filtering_stream.hpp>
+#include <boost/iostreams/copy.hpp>
+#include <boost/iostreams/filter/gzip.hpp>
+#include <boost/iostreams/device/file.hpp> // for file_sink
+
+#endif
+
 using namespace std;
 
+PIN_LOCK lock;
 
 /*
  * Knobs for tool
@@ -65,7 +90,7 @@ KNOB<BOOL> KnobProcessBuffer(KNOB_MODE_WRITEONCE, "pintool", "process_buffs", "1
 // 256*4096=1048576 - same size buffer in memtrace_simple, membuffer_simple, membuffer_multi
 KNOB<UINT32> KnobNumPagesInBuffer(KNOB_MODE_WRITEONCE, "pintool", "num_pages_in_buffer", "256", "number of pages in buffer");
 
-
+#define PADSIZE 64
 class thread_data_t {
 public:
 #ifdef COMPRESS_STREAM
@@ -75,12 +100,15 @@ public:
 #endif
 	UINT8 _pad[PADSIZE];
 };
+std::vector<thread_data_t*> localStore;
+
+int pagesize;
 
 /* Struct of memory reference written to the buffer
  */
 struct MEMREF
 {
-    ADDRINT read;
+    BOOL read;
     ADDRINT ea;
 	THREADID tid;
 };
@@ -91,6 +119,7 @@ BUFFER_ID bufId;
 // the Pin TLS slot that an application-thread will use to hold the APP_THREAD_REPRESENTITVE
 // object that it owns
 TLS_KEY appThreadRepresentitiveKey;
+struct timeval start;
 
 UINT32 totalBuffersFilled = 0;
 UINT64 totalElementsProcessed = 0;
@@ -132,6 +161,17 @@ APP_THREAD_REPRESENTITVE::~APP_THREAD_REPRESENTITVE()
 {
 }
 
+//http://stackoverflow.com/questions/2333728/stdmap-default-value
+template <typename K, typename V>
+V GetWithDef(const  std::map <K,V> & m, const K & key, const V & defval ) {
+	typename std::map<K,V>::const_iterator it = m.find( key );
+	if ( it == m.end() ) {
+		return defval;
+	} else {
+		return it->second;
+	}
+}
+
 
 VOID APP_THREAD_REPRESENTITVE::ProcessBuffer(VOID *buf, UINT64 numElements)
 {
@@ -142,14 +182,43 @@ VOID APP_THREAD_REPRESENTITVE::ProcessBuffer(VOID *buf, UINT64 numElements)
     {
         return;
     }
-    
+    if (numElements < 1) {
+		return;
+	}
+	
     struct MEMREF * memref=(struct MEMREF*)buf;
     struct MEMREF * firstMemref = memref;
+
+	int tid = firstMemref->tid;
+	thread_data_t* tdata = localStore[tid];
+	#ifdef COMPRESS_STREAM
+		boost::iostreams::filtering_ostream& ThreadStream = tdata->ThreadStream;
+	#else
+		ofstream& ThreadStream = tdata->ThreadStream;
+	#endif
+		std::set<void*> pages;
+		std::map<void*,int> page_reads;
+		std::map<void*,int> page_writes;
 	UINT64 until = numElements;
     for(UINT64 i=0; i<until; i++, memref++)
     {
-        firstMemref->read += memref->read + memref->ea;
+		void* page = (void*)((unsigned long long)(memref->ea) & ~(pagesize-1));
+		pages.insert(page);
+		if (memref->read) {
+			page_reads[page] = GetWithDef(page_reads, page, 0) + 1;
+		} else {
+			page_writes[page] = GetWithDef(page_writes, page, 0) + 1;
+		}
+        
     }
+	for (std::set<void*>::iterator it = pages.begin(); it != pages.end(); it++) {
+		int status[1];
+		status[0]=-1;
+		void * ptr_to_check = *it;
+		move_pages(0 /*self memory */, 1, &ptr_to_check,  NULL, status, 0);
+
+		ThreadStream << ((unsigned long long)(*it))/pagesize << "\t" << status[0] << "\t" << GetWithDef(page_reads, *it, 0) << "\t" << GetWithDef(page_writes, *it, 0) << "\n";
+	}
     _numElementsProcessed += (UINT32)until;
      //printf ("numElements processed %d\n", (UINT32)numElements);
 }
@@ -175,14 +244,14 @@ VOID Trace(TRACE trace, VOID *v)
             {
 				if (INS_MemoryOperandIsRead(ins, memOp)) {
                     INS_InsertFillBuffer(ins, IPOINT_BEFORE, bufId,
-                                             IARG_PTR, 1, offsetof(struct MEMREF, read),
+                                             IARG_BOOL, TRUE, offsetof(struct MEMREF, read),
                                              IARG_MEMORYOP_EA, memOp, offsetof(struct MEMREF, ea),
 											IARG_THREAD_ID, offsetof(struct MEMREF, tid),
                                              IARG_END);
 				}
 				if (INS_MemoryOperandIsWritten(ins, memOp)) {
                     INS_InsertFillBuffer(ins, IPOINT_BEFORE, bufId,
-                                             IARG_PTR, 0, offsetof(struct MEMREF, read),
+                                             IARG_BOOL, FALSE, offsetof(struct MEMREF, read),
                                              IARG_MEMORYOP_EA, memOp, offsetof(struct MEMREF, ea),
 											IARG_THREAD_ID, offsetof(struct MEMREF, tid),
                                              IARG_END);
@@ -213,8 +282,17 @@ VOID Trace(TRACE trace, VOID *v)
 VOID * BufferFull(BUFFER_ID id, THREADID tid, const CONTEXT *ctxt, VOID *buf,
                   UINT64 numElements, VOID *v)
 {
-	int cpuid = sched_getcpu();
-	printf("tid %i, cpu %i\n", (int)tid, cpuid);
+	thread_data_t* tdata = localStore[tid];
+	#ifdef COMPRESS_STREAM
+		boost::iostreams::filtering_ostream& ThreadStream = tdata->ThreadStream;
+	#else
+		ofstream& ThreadStream = tdata->ThreadStream;
+	#endif
+		int cpuid = sched_getcpu();
+		struct timeval stamp;
+		gettimeofday(&stamp, NULL);
+		// print core and time stamp
+		ThreadStream << cpuid << "\t" << stamp.tv_sec - start.tv_sec << "\t" << stamp.tv_usec << endl;
     APP_THREAD_REPRESENTITVE * appThreadRepresentitive = static_cast<APP_THREAD_REPRESENTITVE*>( PIN_GetThreadData( appThreadRepresentitiveKey, tid ) );
 
     appThreadRepresentitive->ProcessBuffer(buf, numElements);
@@ -226,12 +304,27 @@ VOID * BufferFull(BUFFER_ID id, THREADID tid, const CONTEXT *ctxt, VOID *buf,
 
 VOID ThreadStart(THREADID tid, CONTEXT *ctxt, INT32 flags, VOID *v)
 {
+	GetLock(&lock, tid+1);
     // There is a new APP_THREAD_REPRESENTITVE for every thread.
     APP_THREAD_REPRESENTITVE * appThreadRepresentitive = new APP_THREAD_REPRESENTITVE(tid);
 
     // A thread will need to look up its APP_THREAD_REPRESENTITVE, so save pointer in TLS
     PIN_SetThreadData(appThreadRepresentitiveKey, appThreadRepresentitive, tid);
 
+	localStore.resize(tid+1);
+	localStore[tid] = new thread_data_t();
+	thread_data_t* tdata = localStore[tid];
+		char file[80];
+	#ifdef COMPRESS_STREAM
+		sprintf(file, "thread_%i.dat.gz", tid);
+		boost::iostreams::filtering_ostream& ThreadStream = tdata->ThreadStream;
+		ThreadStream.push(boost::iostreams::gzip_compressor());
+		ThreadStream.push(boost::iostreams::file_sink(file, ios_base::out | ios_base::binary));
+	#else
+		sprintf(file, "thread_%i.dat", tid);
+		tdata->ThreadStream.open(file);
+	#endif
+		ReleaseLock(&lock);
 }
 
 
@@ -244,6 +337,14 @@ VOID ThreadFini(THREADID tid, const CONTEXT *ctxt, INT32 code, VOID *v)
     delete appThreadRepresentitive;
 
     PIN_SetThreadData(appThreadRepresentitiveKey, 0, tid);
+
+		thread_data_t* tdata = localStore[tid];
+	#ifdef COMPRESS_STREAM
+		boost::iostreams::filtering_ostream& ThreadStream = tdata->ThreadStream;
+		boost::iostreams::close(ThreadStream);
+	#else
+		tdata->ThreadStream.close();
+	#endif
 }
 
 VOID Fini(INT32 code, VOID *v)
@@ -277,7 +378,10 @@ int main(int argc, char *argv[])
     {
         return Usage();
     }
-    
+
+	pagesize = getpagesize();
+    // Initialize the pin lock
+	InitLock(&lock);
     // Initialize the memory reference buffer
     //printf ("buffer size in bytes 0x%x\n", KnobNumPagesInBuffer.Value()*4096);
     //	fflush (stdout);
@@ -302,6 +406,8 @@ int main(int argc, char *argv[])
     PIN_AddThreadFiniFunction(ThreadFini, 0);
     PIN_AddFiniFunction(Fini, 0);
 
+
+	gettimeofday(&start, NULL);
     // Start the program, never returns
     PIN_StartProgram();
     
