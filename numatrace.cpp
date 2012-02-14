@@ -93,6 +93,7 @@ KNOB<UINT32> KnobNumPagesInBuffer(KNOB_MODE_WRITEONCE, "pintool", "num_pages_in_
 #define PADSIZE 64
 class thread_data_t {
 public:
+	
 #ifdef COMPRESS_STREAM
 	boost::iostreams::filtering_ostream ThreadStream;
 #else
