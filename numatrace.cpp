@@ -1,8 +1,8 @@
-/*BEGIN_LEGAL
-Intel Open Source License
+/*BEGIN_LEGAL 
+Intel Open Source License 
 
 Copyright (c) 2002-2011 Intel Corporation. All rights reserved.
-
+ 
 Redistribution and use in source and binary forms, with or without
 modification, are permitted provided that the following conditions are
 met:
@@ -15,7 +15,7 @@ other materials provided with the distribution.  Neither the name of
 the Intel Corporation nor the names of its contributors may be used to
 endorse or promote products derived from this software without
 specific prior written permission.
-
+ 
 THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
 ``AS IS'' AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
 LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
@@ -28,379 +28,274 @@ THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 END_LEGAL */
+/*
+ * 
+ * A memory trace (Ip of memory accessing instruction and address of memory access - see
+ * struct MEMREF) is collected by inserting Pin buffering API code into the application code, 
+ * via calls to INS_InsertFillBuffer. This analysis code writes a MEMREF into the 
+ * buffer being filled, and calls the registered BufferFull function (see call to 
+ * PIN_DefineTraceBuffer which defines the buffer and registers the BufferFull function) 
+ * when the buffer becomes full.
+ * The BufferFull function processes the buffer and returns it to Pin to be filled again.
+ *
+ * Each application thread has it's own buffer - so multiple application threads do NOT
+ * block each other on buffer accesses
+ *
+ * This tool is similar to memtrace_simple, but uses the Pin Buffering API
+ * 
+ */
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <stddef.h>
+
+#include <sched.h>
+
+#include "pin.H"
+#include "portability.H"
+using namespace std;
+
+
+/*
+ * Knobs for tool
+ */
+
+
+KNOB<BOOL> KnobProcessBuffer(KNOB_MODE_WRITEONCE, "pintool", "process_buffs", "1", "process the filled buffers");
+// 256*4096=1048576 - same size buffer in memtrace_simple, membuffer_simple, membuffer_multi
+KNOB<UINT32> KnobNumPagesInBuffer(KNOB_MODE_WRITEONCE, "pintool", "num_pages_in_buffer", "256", "number of pages in buffer");
+
+
+/* Struct of memory reference written to the buffer
+ */
+struct MEMREF
+{
+    ADDRINT pc;
+    ADDRINT ea;
+	THREADID tid;
+};
+
+// The buffer ID returned by the one call to PIN_DefineTraceBuffer
+BUFFER_ID bufId;
+
+// the Pin TLS slot that an application-thread will use to hold the APP_THREAD_REPRESENTITVE
+// object that it owns
+TLS_KEY appThreadRepresentitiveKey;
+
+UINT32 totalBuffersFilled = 0;
+UINT64 totalElementsProcessed = 0;
+
+/*
+ *
+ * APP_THREAD_REPRESENTITVE
+ *
+ * Each application thread, creates an object of this class and saves it in it's Pin TLS
+ * slot (appThreadRepresentitiveKey).
+ */
+class APP_THREAD_REPRESENTITVE
+{
+ 
+  public:
+    APP_THREAD_REPRESENTITVE(THREADID tid);
+    ~APP_THREAD_REPRESENTITVE();
+
+    VOID ProcessBuffer(VOID *buf, UINT64 numElements);
+    UINT32 NumBuffersFilled() {return _numBuffersFilled;}
+
+    UINT32 NumElementsProcessed() {return _numElementsProcessed;}
+
+  private:
+    UINT32 _numBuffersFilled;
+    UINT32 _numElementsProcessed;
+    
+};
+
+
+APP_THREAD_REPRESENTITVE::APP_THREAD_REPRESENTITVE(THREADID tid)
+{
+    _numBuffersFilled = 0;
+    _numElementsProcessed = 0;
+}
+
+
+APP_THREAD_REPRESENTITVE::~APP_THREAD_REPRESENTITVE()
+{
+}
+
+
+VOID APP_THREAD_REPRESENTITVE::ProcessBuffer(VOID *buf, UINT64 numElements)
+{
+    _numBuffersFilled++;
+    //printf ("numElements %d\n", (UINT32)numElements);
+    
+    if (!KnobProcessBuffer )
+    {
+        return;
+    }
+    
+    struct MEMREF * memref=(struct MEMREF*)buf;
+    struct MEMREF * firstMemref = memref;
+	UINT64 until = numElements;
+    for(UINT64 i=0; i<until; i++, memref++)
+    {
+        firstMemref->pc += memref->pc + memref->ea;
+    }
+    _numElementsProcessed += (UINT32)until;
+     //printf ("numElements processed %d\n", (UINT32)numElements);
+}
+
 
 
 
 /*
-Mark Roth (mr.mark.roth@gmail.com / mroth@sfu.ca)
+ * Insert code to write data to a thread-specific buffer for instructions
+ * that access memory.
+ */
+VOID Trace(TRACE trace, VOID *v)
+{
+    // Insert a call to record the effective address.
+    for(BBL bbl = TRACE_BblHead(trace); BBL_Valid(bbl); bbl=BBL_Next(bbl))
+    {
+        for(INS ins = BBL_InsHead(bbl); INS_Valid(ins); ins=INS_Next(ins))
+        {
+            UINT32 memOperands = INS_MemoryOperandCount(ins);
 
-Will write a separate trace file for each thread. Output format
-is the following. Each line will contain either 3 or 4 items
-that are tab deliminated.
-
-If there are three items, the format is as follows:
-
-CPU_ID	Sec	uSec
-
-If there are four items:
-
-PAGE_ID	Status[-ERROR]/NUMA_NODE[0-N]	READS	WRITES
-
-*/
-
-#include "pin.H"
-#include <iostream>
-#include <string.h>
-#include <fstream>
-#include <stdlib.h>
-#include <stdio.h>
-#include <sys/time.h>
-#include <sched.h>
-#include <unistd.h>
-#include <numaif.h>
-
-#include <assert.h>
-#include <map>
-#include <vector>
-#include <set>
-
-
-#ifdef COMPRESS_STREAM
-
-// sudo aptget install libboost-iostreams-dev
-// -lboost_iostreams
-#include <boost/iostreams/filtering_streambuf.hpp>
-#include <boost/iostreams/filtering_stream.hpp>
-#include <boost/iostreams/copy.hpp>
-#include <boost/iostreams/filter/gzip.hpp>
-#include <boost/iostreams/device/file.hpp> // for file_sink
-
-#endif
-
-
-
-
-// Force each thread's data to be in its own data cache line so that
-// multiple threads do not contend for the same data cache line.
-// This avoids the false sharing problem.
-#define PADSIZE 64  // 64 byte line size
-
-// a running count of the instructions
-class thread_data_t {
-public:
-	thread_data_t() : _count(0) {}
-	int _count;
-
-#ifdef COMPRESS_STREAM
-	boost::iostreams::filtering_ostream ThreadStream;
-#else
-	ofstream ThreadStream;
-#endif
-	UINT8 _pad[PADSIZE];
-};
-
-struct MemEvent {
-	bool read;
-	ADDRINT  addr;
-};
-
-typedef struct RtnName {
-	string _name;
-	string _image;
-	ADDRINT _address;
-	RTN _rtn;
-	struct RtnName * _next;
-} RTN_NAME;
-
-const char * StripPath(const char * path) {
-	const char * file = strrchr(path,'/');
-	if (file) {
-		return file+1;
-	} else {
-		return path;
-	}
+            // Iterate over each memory operand of the instruction.
+            for (UINT32 memOp = 0; memOp < memOperands; memOp++)
+            {
+				if (INS_MemoryOperandIsRead(ins, memOp)) {
+                    INS_InsertFillBuffer(ins, IPOINT_BEFORE, bufId,
+                                             IARG_INST_PTR, offsetof(struct MEMREF, pc),
+                                             IARG_MEMORYOP_EA, memOp, offsetof(struct MEMREF, ea),
+											IARG_THREAD_ID, offsetof(struct MEMREF, tid),
+                                             IARG_END);
+				}
+				if (INS_MemoryOperandIsWritten(ins, memOp)) {
+                    INS_InsertFillBuffer(ins, IPOINT_BEFORE, bufId,
+                                             IARG_INST_PTR, offsetof(struct MEMREF, pc),
+                                             IARG_MEMORYOP_EA, memOp, offsetof(struct MEMREF, ea),
+											IARG_THREAD_ID, offsetof(struct MEMREF, tid),
+                                             IARG_END);
+				}
+            }
+        }
+    }
 }
 
 
+/**************************************************************************
+ *
+ *  Callback Routines
+ *
+ **************************************************************************/
 
-/* ===================================================================== */
-/* Global Variables */
-/* ===================================================================== */
-
-std::vector<MemEvent*> memEvents;
-int pagesize;
-struct timeval start;
-
-
-
-std::vector<thread_data_t*> localStore;
-#define DEFAULT_BUFFER "10000"
-#define DEFAULT_RUNOVER "1000"
-
-int bufferTriggerSize;
-int bufferArraySize;
-
-std::ofstream MallocFile;
-PIN_LOCK lock;
-
-/* ===================================================================== */
-/* Commandline Switches */
-/* ===================================================================== */
-
-KNOB<string> KnobOutputFile(KNOB_MODE_WRITEONCE, "pintool",
-                            "m", "malloctrace.out", "specify malloc trace file name");
-
-KNOB<int> KnobBufferSize(KNOB_MODE_WRITEONCE, "pintool",
-                         "b", DEFAULT_BUFFER, "specify buffer size. Default 10000");
-
-KNOB<int> KnobRunOverSize(KNOB_MODE_WRITEONCE, "pintool",
-                         "r", DEFAULT_BUFFER, "specify buffer runover, this needs to be greater than the number of potential memory accesses at the trace level. Default 1000");
-
-
-/* ===================================================================== */
-
-
-/* ===================================================================== */
-/* Analysis routines                                                     */
-/* ===================================================================== */
-
-
-// Note that opening a file in a callback is only supported on Linux systems.
-// See buffer-win.cpp for how to work around this issue on Windows.
-//
-// This routine is executed every time a thread is created.
-VOID ThreadStart(THREADID threadid, CONTEXT *ctxt, INT32 flags, VOID *v) {
-	GetLock(&lock, threadid+1);
-	localStore.resize(threadid+1);
-	localStore[threadid] = new thread_data_t();
-	thread_data_t* tdata = localStore[threadid];
-	tdata->_count = 0;
-	char file[80];
-#ifdef COMPRESS_STREAM
-	sprintf(file, "thread_%i.dat.gz", threadid);
-	boost::iostreams::filtering_ostream& ThreadStream = tdata->ThreadStream;
-	ThreadStream.push(boost::iostreams::gzip_compressor());
-	ThreadStream.push(boost::iostreams::file_sink(file, ios_base::out | ios_base::binary));
-#else
-	sprintf(file, "thread_%i.dat", threadid);
-	tdata->ThreadStream.open(file);
-#endif
-	MallocFile << threadid << " basePtr " << PIN_GetContextReg(ctxt, REG_STACK_PTR) << endl;
-	// bufferArraySize defined as global
-	memEvents.push_back( (MemEvent*)malloc(bufferArraySize * sizeof(MemEvent)) );
-
-	ReleaseLock(&lock);
-}
-
-VOID ThreadStop(THREADID tid, const CONTEXT *ctxt, INT32 code, VOID *v) {
-	thread_data_t* tdata = localStore[tid];
-#ifdef COMPRESS_STREAM
-	boost::iostreams::filtering_ostream& ThreadStream = tdata->ThreadStream;
-	boost::iostreams::close(ThreadStream);
-#else
-	tdata->ThreadStream.close();
-#endif
-
-}
-
-
-
-
-
-
-//http://stackoverflow.com/questions/2333728/stdmap-default-value
-template <typename K, typename V>
-V GetWithDef(const  std::map <K,V> & m, const K & key, const V & defval ) {
-	typename std::map<K,V>::const_iterator it = m.find( key );
-	if ( it == m.end() ) {
-		return defval;
-	} else {
-		return it->second;
-	}
-}
-
-ADDRINT CheckCutoff(THREADID tid) {
-	thread_data_t* tdata = localStore[tid];
-	return (tdata->_count > bufferTriggerSize);
-}
-
-VOID timestamp(THREADID tid) {
-	thread_data_t* tdata = localStore[tid];
-	assert((tdata->_count < bufferArraySize) && "buffer overflow for page access; increase buffer runover value -r");
-#ifdef COMPRESS_STREAM
-	boost::iostreams::filtering_ostream& ThreadStream = tdata->ThreadStream;
-#else
-	ofstream& ThreadStream = tdata->ThreadStream;
-#endif
-	std::set<void*> pages;
-	std::map<void*,int> page_reads;
-	std::map<void*,int> page_writes;
-	for (int i = 0; i < (int)tdata->_count; i++) {
-		// http://stackoverflow.com/questions/6387771/get-starting-address-of-a-memory-page-in-linux
-		void* page = (void*)((unsigned long long)memEvents[tid][i].addr & ~(pagesize-1));
-		pages.insert(page);
-		if (memEvents[tid][i].read) {
-			page_reads[page] = GetWithDef(page_reads, page, 0) + 1;
-		} else {
-			page_writes[page] = GetWithDef(page_writes, page, 0) + 1;
-		}
-	}
+/*!
+ * Called when a buffer fills up, or the thread exits, so we can process it or pass it off
+ * as we see fit.
+ * @param[in] id		buffer handle
+ * @param[in] tid		id of owning thread
+ * @param[in] ctxt		application context
+ * @param[in] buf		actual pointer to buffer
+ * @param[in] numElements	number of records
+ * @param[in] v			callback value
+ * @return  A pointer to the buffer to resume filling.
+ */
+VOID * BufferFull(BUFFER_ID id, THREADID tid, const CONTEXT *ctxt, VOID *buf,
+                  UINT64 numElements, VOID *v)
+{
 	int cpuid = sched_getcpu();
-	struct timeval stamp;
-	gettimeofday(&stamp, NULL);
-	// print core and time stamp
-	ThreadStream << cpuid << "\t" << stamp.tv_sec - start.tv_sec << "\t" << stamp.tv_usec << endl;
-	// print page node read writes
-	for (std::set<void*>::iterator it = pages.begin(); it != pages.end(); it++) {
-		int status[1];
-		status[0]=-1;
-		void * ptr_to_check = *it;
-		move_pages(0 /*self memory */, 1, &ptr_to_check,  NULL, status, 0);
+	printf("tid %i, cpu %i\n", (int)tid, cpuid);
+    APP_THREAD_REPRESENTITVE * appThreadRepresentitive = static_cast<APP_THREAD_REPRESENTITVE*>( PIN_GetThreadData( appThreadRepresentitiveKey, tid ) );
 
-		ThreadStream << ((unsigned long long)(*it))/pagesize << "\t" << status[0] << "\t" << GetWithDef(page_reads, *it, 0) << "\t" << GetWithDef(page_writes, *it, 0) << "\n";
-	}
-
-	tdata->_count = 0;
+    appThreadRepresentitive->ProcessBuffer(buf, numElements);
+    
+    return buf;
 }
 
 
-// Print a memory read access
-VOID PIN_FAST_ANALYSIS_CALL RecordMemRead(ADDRINT  addr, THREADID threadid) {
-	thread_data_t* tdata = localStore[threadid];
-	memEvents[threadid][tdata->_count].read = 1;
-	memEvents[threadid][tdata->_count].addr = addr;
-	tdata->_count = (tdata->_count + 1) ;
-}
 
-VOID PIN_FAST_ANALYSIS_CALL RecordMemWrite(ADDRINT  addr, THREADID threadid) {
-	thread_data_t* tdata = localStore[threadid];
-//	thread_data_t* tdata = get_tls(threadid);
-	memEvents[threadid][tdata->_count].read = 0;
-	memEvents[threadid][tdata->_count].addr = addr;
-	tdata->_count = (tdata->_count + 1) ;
+VOID ThreadStart(THREADID tid, CONTEXT *ctxt, INT32 flags, VOID *v)
+{
+    // There is a new APP_THREAD_REPRESENTITVE for every thread.
+    APP_THREAD_REPRESENTITVE * appThreadRepresentitive = new APP_THREAD_REPRESENTITVE(tid);
+
+    // A thread will need to look up its APP_THREAD_REPRESENTITVE, so save pointer in TLS
+    PIN_SetThreadData(appThreadRepresentitiveKey, appThreadRepresentitive, tid);
 
 }
 
-/* ===================================================================== */
-/* Instrumentation routines                                              */
-/* ===================================================================== */
 
+VOID ThreadFini(THREADID tid, const CONTEXT *ctxt, INT32 code, VOID *v)
+{
+    APP_THREAD_REPRESENTITVE * appThreadRepresentitive = static_cast<APP_THREAD_REPRESENTITVE*>(PIN_GetThreadData(appThreadRepresentitiveKey, tid));
+    totalBuffersFilled += appThreadRepresentitive->NumBuffersFilled();
+    totalElementsProcessed +=  appThreadRepresentitive->NumElementsProcessed();
 
-VOID Routine(RTN rtn, VOID *v) {
-	// Allocate a counter for this routine
-	RtnName * rc = new RTN_NAME;
+    delete appThreadRepresentitive;
 
-	// The RTN goes away when the image is unloaded, so save it now
-	// because we need it in the fini
-	rc->_name = RTN_Name(rtn);
-	rc->_image = StripPath(IMG_Name(SEC_Img(RTN_Sec(rtn))).c_str());
-	rc->_address = RTN_Address(rtn);
-	MallocFile << rc->_address << " " << rc->_image.c_str() << " " << rc->_name.c_str() << endl;
+    PIN_SetThreadData(appThreadRepresentitiveKey, 0, tid);
 }
 
-VOID Trace(TRACE trace, VOID *v) {
-	TRACE_InsertIfCall(trace, IPOINT_BEFORE, (AFUNPTR)CheckCutoff, IARG_THREAD_ID, IARG_END);
-	TRACE_InsertThenCall(trace, IPOINT_BEFORE, (AFUNPTR)timestamp, IARG_THREAD_ID, IARG_END);
+VOID Fini(INT32 code, VOID *v)
+{
+    printf ("totalBuffersFilled %u  totalElementsProcessed %14.0f\n", (totalBuffersFilled),  
+           static_cast<double>(totalElementsProcessed));
+}
+
+INT32 Usage()
+{
+    printf( "This tool demonstrates simple pin-tool buffer managing\n");
+    printf ("The following command line options are available:\n");
+    printf ("-num_pages_in_buffer <num>   :number of (4096byte) pages allocated in each buffer,         default 256\n");
+    printf ("-process_buffs <0 or 1>      :specify 0 to disable processing of the buffers,              default   1\n");
+    return -1;
 }
 
 
-// Is called for every instruction and instruments reads and writes
-VOID Instruction(INS ins, VOID *v) {
-	// Instruments memory accesses using a predicated call, i.e.
-	// the instrumentation is called iff the instruction will actually be executed.
-	//
-	// The IA-64 architecture has explicitly predicated instructions.
-	// On the IA-32 and Intel(R) 64 architectures conditional moves and REP
-	// prefixed instructions appear as predicated instructions in Pin.
-	UINT32 memOperands = INS_MemoryOperandCount(ins);
+/*!
+ * The main procedure of the tool.
+ * This function is called when the application image is loaded but not yet started.
+ * @param[in]   argc            total number of elements in the argv array
+ * @param[in]   argv            array of command line arguments, 
+ *                              including pin -t <toolname> -- ...
+ */
+int main(int argc, char *argv[])
+{
+    // Initialize PIN library. Print help message if -h(elp) is specified
+    // in the command line or the command line is invalid
+    if( PIN_Init(argc,argv) )
+    {
+        return Usage();
+    }
+    
+    // Initialize the memory reference buffer
+    //printf ("buffer size in bytes 0x%x\n", KnobNumPagesInBuffer.Value()*4096);
+    //	fflush (stdout);
+    
+    bufId = PIN_DefineTraceBuffer(sizeof(struct MEMREF), KnobNumPagesInBuffer,
+                                  BufferFull, 0);
 
-	// Iterate over each memory operand of the instruction.
-	for (UINT32 memOp = 0; memOp < memOperands; memOp++) {
-		if (INS_MemoryOperandIsRead(ins, memOp)) {
-			INS_InsertPredicatedCall(
-			    ins, IPOINT_BEFORE, (AFUNPTR)RecordMemRead,
-			    IARG_FAST_ANALYSIS_CALL,
-			    IARG_MEMORYOP_EA, memOp,
-			    IARG_THREAD_ID,
-			    IARG_END);
-		}
-		// Note that in some architectures a single memory operand can be
-		// both read and written (for instance incl (%eax) on IA-32)
-		// In that case we instrument it once for read and once for write.
-		if (INS_MemoryOperandIsWritten(ins, memOp)) {
-			INS_InsertPredicatedCall(
-			    ins, IPOINT_BEFORE, (AFUNPTR)RecordMemWrite,
-			    IARG_FAST_ANALYSIS_CALL,
-			    IARG_MEMORYOP_EA, memOp,
-			    IARG_THREAD_ID,
-			    IARG_END);
-		}
-	}
+    if(bufId == BUFFER_ID_INVALID)
+    {
+        printf ("Error: could not allocate initial buffer\n");
+        return 1;
+    }
+
+    // Initialize thread-specific data not handled by buffering api.
+    appThreadRepresentitiveKey = PIN_CreateThreadDataKey(0);
+   
+    // add an instrumentation function
+    TRACE_AddInstrumentFunction(Trace, 0);
+
+    // add callbacks
+    PIN_AddThreadStartFunction(ThreadStart, 0);
+    PIN_AddThreadFiniFunction(ThreadFini, 0);
+    PIN_AddFiniFunction(Fini, 0);
+
+    // Start the program, never returns
+    PIN_StartProgram();
+    
+    return 0;
 }
 
-/* ===================================================================== */
 
-VOID Fini(INT32 code, VOID *v) {
-	MallocFile.close();
-
-	for (int i = 0; i < (int)memEvents.size(); i++) {
-		free(memEvents[i]);
-	}
-}
-
-/* ===================================================================== */
-/* Print Help Message                                                    */
-/* ===================================================================== */
-
-INT32 Usage() {
-	cerr << "This tool produces a trace of calls to malloc." << endl;
-	cerr << endl << KNOB_BASE::StringKnobSummary() << endl;
-	return -1;
-}
-
-/* ===================================================================== */
-/* Main                                                                  */
-/* ===================================================================== */
-
-int main(int argc, char *argv[]) {
-
-	pagesize = getpagesize();
-	// Initialize pin & symbol manager
-	PIN_InitSymbols();
-	if( PIN_Init(argc,argv) ) {
-		return Usage();
-	}
-
-	// Initialize the pin lock
-	InitLock(&lock);
-	bufferTriggerSize = KnobBufferSize.Value() ;
-	bufferArraySize = bufferTriggerSize + KnobRunOverSize.Value();
-
-	// Write to a file since cout and cerr maybe closed by the application
-	MallocFile.open(KnobOutputFile.Value().c_str());
-	//  MallocFile << hex;
-	//  MallocFile.setf(ios::showbase);
-
-	MallocFile << "Page size: " << pagesize << "\n";
-
-	// Register Image to be called to instrument functions.
-	INS_AddInstrumentFunction(Instruction, 0);
-	TRACE_AddInstrumentFunction(Trace, 0);
-	PIN_AddFiniFunction(Fini, 0);
-
-	// Register Analysis routines to be called when a thread begins/ends
-	PIN_AddThreadStartFunction(ThreadStart, 0);
-	PIN_AddThreadFiniFunction(ThreadStop, 0);
-
-
-
-	// Never returns
-	gettimeofday(&start, NULL);
-	PIN_StartProgram();
-
-	return 0;
-}
-
-/* ===================================================================== */
-/* eof */
-/* ===================================================================== */
