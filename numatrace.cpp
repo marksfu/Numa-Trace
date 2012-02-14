@@ -192,16 +192,7 @@ VOID ThreadStart(THREADID threadid, CONTEXT *ctxt, INT32 flags, VOID *v) {
 	ReleaseLock(&lock);
 }
 
-VOID ThreadStop(THREADID tid, const CONTEXT *ctxt, INT32 code, VOID *v) {
-	thread_data_t* tdata = localStore[tid];
-#ifdef COMPRESS_STREAM
-	boost::iostreams::filtering_ostream& ThreadStream = tdata->ThreadStream;
-	boost::iostreams::close(ThreadStream);
-#else
-	tdata->ThreadStream.close();
-#endif
 
-}
 
 
 
@@ -263,6 +254,19 @@ VOID timestamp(THREADID tid) {
 	tdata->_count = 0;
 }
 
+
+VOID ThreadStop(THREADID tid, const CONTEXT *ctxt, INT32 code, VOID *v) {
+	// clear buffer
+	timestamp(tid);
+	thread_data_t* tdata = localStore[tid];
+#ifdef COMPRESS_STREAM
+	boost::iostreams::filtering_ostream& ThreadStream = tdata->ThreadStream;
+	boost::iostreams::close(ThreadStream);
+#else
+	tdata->ThreadStream.close();
+#endif
+
+}
 
 // Print a memory read access
 VOID PIN_FAST_ANALYSIS_CALL RecordMemRead(ADDRINT  addr, THREADID threadid) {
