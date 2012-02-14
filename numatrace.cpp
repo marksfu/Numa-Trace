@@ -131,9 +131,9 @@ std::vector<MemEvent*> memEvents;
 int pagesize;
 struct timeval start;
 
-#define MAX_THREADS 1024
 
-thread_data_t local[MAX_THREADS];
+
+std::vector<thread_data_t*> localStore;
 #define MAX_EVENTS 10000
 #define SAFTY_CUT 9900
 
@@ -161,17 +161,19 @@ KNOB<string> KnobOutputFile(KNOB_MODE_WRITEONCE, "pintool",
 // This routine is executed every time a thread is created.
 VOID ThreadStart(THREADID threadid, CONTEXT *ctxt, INT32 flags, VOID *v) {
 	GetLock(&lock, threadid+1);
-	thread_data_t& tdata = local[threadid];
-	tdata._count = 0;
+	localStore.resize(threadid+1);
+	localStore[threadid] = new thread_data_t();
+	thread_data_t* tdata = localStore[threadid];
+	tdata->_count = 0;
 	char file[80];
 #ifdef COMPRESS_STREAM
 	sprintf(file, "thread_%i.dat.gz", threadid);
-	boost::iostreams::filtering_ostream& ThreadStream = tdata.ThreadStream;
+	boost::iostreams::filtering_ostream& ThreadStream = tdata->ThreadStream;
 	ThreadStream.push(boost::iostreams::gzip_compressor());
 	ThreadStream.push(boost::iostreams::file_sink(file, ios_base::out | ios_base::binary));
 #else
 	sprintf(file, "thread_%i.dat", threadid);
-	tdata.ThreadStream.open(file);
+	tdata->ThreadStream.open(file);
 #endif
 	MallocFile << threadid << " basePtr " << PIN_GetContextReg(ctxt, REG_STACK_PTR) << endl;
 	memEvents.push_back( (MemEvent*)malloc(MAX_EVENTS * sizeof(MemEvent)) );
@@ -180,12 +182,12 @@ VOID ThreadStart(THREADID threadid, CONTEXT *ctxt, INT32 flags, VOID *v) {
 }
 
 VOID ThreadStop(THREADID tid, const CONTEXT *ctxt, INT32 code, VOID *v) {
-	thread_data_t& tdata = local[tid];
+	thread_data_t* tdata = localStore[tid];
 #ifdef COMPRESS_STREAM
-	boost::iostreams::filtering_ostream& ThreadStream = tdata.ThreadStream;
+	boost::iostreams::filtering_ostream& ThreadStream = tdata->ThreadStream;
 	boost::iostreams::close(ThreadStream);
 #else
-	tdata.ThreadStream.close();
+	tdata->ThreadStream.close();
 #endif
 
 }
@@ -207,22 +209,22 @@ V GetWithDef(const  std::map <K,V> & m, const K & key, const V & defval ) {
 }
 
 ADDRINT CheckCutoff(THREADID tid) {
-	thread_data_t& tdata = local[tid];
-	return (tdata._count > SAFTY_CUT);
+	thread_data_t* tdata = localStore[tid];
+	return (tdata->_count > SAFTY_CUT);
 }
 
 VOID timestamp(THREADID tid) {
-	thread_data_t& tdata = local[tid];
-	assert((tdata._count < MAX_EVENTS) && "buffer overflow for page access; increase MAX_EVENTS constant");
+	thread_data_t* tdata = localStore[tid];
+	assert((tdata->_count < MAX_EVENTS) && "buffer overflow for page access; increase MAX_EVENTS constant");
 #ifdef COMPRESS_STREAM
-	boost::iostreams::filtering_ostream& ThreadStream = tdata.ThreadStream;
+	boost::iostreams::filtering_ostream& ThreadStream = tdata->ThreadStream;
 #else
-	ofstream& ThreadStream = tdata.ThreadStream;
+	ofstream& ThreadStream = tdata->ThreadStream;
 #endif
 	std::set<void*> pages;
 	std::map<void*,int> page_reads;
 	std::map<void*,int> page_writes;
-	for (int i = 0; i < (int)tdata._count; i++) {
+	for (int i = 0; i < (int)tdata->_count; i++) {
 		// http://stackoverflow.com/questions/6387771/get-starting-address-of-a-memory-page-in-linux
 		void* page = (void*)((unsigned long long)memEvents[tid][i].addr & ~(pagesize-1));
 		pages.insert(page);
@@ -247,24 +249,24 @@ VOID timestamp(THREADID tid) {
 		ThreadStream << ((unsigned long long)(*it))/pagesize << "\t" << status[0] << "\t" << GetWithDef(page_reads, *it, 0) << "\t" << GetWithDef(page_writes, *it, 0) << "\n";
 	}
 
-	tdata._count = 0;
+	tdata->_count = 0;
 }
 
 
 // Print a memory read access
 VOID PIN_FAST_ANALYSIS_CALL RecordMemRead(ADDRINT  addr, THREADID threadid) {
-	thread_data_t& tdata = local[threadid];
-	memEvents[threadid][tdata._count].read = 1;
-	memEvents[threadid][tdata._count].addr = addr;
-	tdata._count = (tdata._count + 1) ;
+	thread_data_t* tdata = localStore[threadid];
+	memEvents[threadid][tdata->_count].read = 1;
+	memEvents[threadid][tdata->_count].addr = addr;
+	tdata->_count = (tdata->_count + 1) ;
 }
 
 VOID PIN_FAST_ANALYSIS_CALL RecordMemWrite(ADDRINT  addr, THREADID threadid) {
-	thread_data_t& tdata = local[threadid];
+	thread_data_t* tdata = localStore[threadid];
 //	thread_data_t* tdata = get_tls(threadid);
-	memEvents[threadid][tdata._count].read = 0;
-	memEvents[threadid][tdata._count].addr = addr;
-	tdata._count = (tdata._count + 1) ;
+	memEvents[threadid][tdata->_count].read = 0;
+	memEvents[threadid][tdata->_count].addr = addr;
+	tdata->_count = (tdata->_count + 1) ;
 
 }
 
