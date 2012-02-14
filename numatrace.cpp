@@ -1,8 +1,8 @@
-/*BEGIN_LEGAL 
-Intel Open Source License 
+/*BEGIN_LEGAL
+Intel Open Source License
 
 Copyright (c) 2002-2011 Intel Corporation. All rights reserved.
- 
+
 Redistribution and use in source and binary forms, with or without
 modification, are permitted provided that the following conditions are
 met:
@@ -15,7 +15,7 @@ other materials provided with the distribution.  Neither the name of
 the Intel Corporation nor the names of its contributors may be used to
 endorse or promote products derived from this software without
 specific prior written permission.
- 
+
 THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
 ``AS IS'' AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
 LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
@@ -105,11 +105,11 @@ struct MemEvent {
 };
 
 typedef struct RtnName {
-    string _name;
-    string _image;
-    ADDRINT _address;
-    RTN _rtn;
-    struct RtnName * _next;
+	string _name;
+	string _image;
+	ADDRINT _address;
+	RTN _rtn;
+	struct RtnName * _next;
 } RTN_NAME;
 
 const char * StripPath(const char * path) {
@@ -118,7 +118,7 @@ const char * StripPath(const char * path) {
 		return file+1;
 	} else {
 		return path;
-	}    
+	}
 }
 
 
@@ -145,7 +145,7 @@ PIN_LOCK lock;
 /* ===================================================================== */
 
 KNOB<string> KnobOutputFile(KNOB_MODE_WRITEONCE, "pintool",
-    "m", "malloctrace.out", "specify malloc trace file name");
+                            "m", "malloctrace.out", "specify malloc trace file name");
 
 /* ===================================================================== */
 
@@ -159,16 +159,15 @@ KNOB<string> KnobOutputFile(KNOB_MODE_WRITEONCE, "pintool",
 // See buffer-win.cpp for how to work around this issue on Windows.
 //
 // This routine is executed every time a thread is created.
-VOID ThreadStart(THREADID threadid, CONTEXT *ctxt, INT32 flags, VOID *v)
-{
-    GetLock(&lock, threadid+1);
+VOID ThreadStart(THREADID threadid, CONTEXT *ctxt, INT32 flags, VOID *v) {
+	GetLock(&lock, threadid+1);
 	thread_data_t& tdata = local[threadid];
-	tdata._count = 0;	
+	tdata._count = 0;
 	char file[80];
 #ifdef COMPRESS_STREAM
 	sprintf(file, "thread_%i.dat.gz", threadid);
 	boost::iostreams::filtering_ostream& ThreadStream = tdata.ThreadStream;
-	ThreadStream.push(boost::iostreams::gzip_compressor()); 
+	ThreadStream.push(boost::iostreams::gzip_compressor());
 	ThreadStream.push(boost::iostreams::file_sink(file, ios_base::out | ios_base::binary));
 #else
 	sprintf(file, "thread_%i.dat", threadid);
@@ -176,12 +175,11 @@ VOID ThreadStart(THREADID threadid, CONTEXT *ctxt, INT32 flags, VOID *v)
 #endif
 	MallocFile << threadid << " basePtr " << PIN_GetContextReg(ctxt, REG_STACK_PTR) << endl;
 	memEvents.push_back( (MemEvent*)malloc(MAX_EVENTS * sizeof(MemEvent)) );
-    
-    ReleaseLock(&lock);
+
+	ReleaseLock(&lock);
 }
 
-VOID ThreadStop(THREADID tid, const CONTEXT *ctxt, INT32 code, VOID *v)
-{
+VOID ThreadStop(THREADID tid, const CONTEXT *ctxt, INT32 code, VOID *v) {
 	thread_data_t& tdata = local[tid];
 #ifdef COMPRESS_STREAM
 	boost::iostreams::filtering_ostream& ThreadStream = tdata.ThreadStream;
@@ -192,7 +190,7 @@ VOID ThreadStop(THREADID tid, const CONTEXT *ctxt, INT32 code, VOID *v)
 
 }
 
- 
+
 
 
 
@@ -200,13 +198,12 @@ VOID ThreadStop(THREADID tid, const CONTEXT *ctxt, INT32 code, VOID *v)
 //http://stackoverflow.com/questions/2333728/stdmap-default-value
 template <typename K, typename V>
 V GetWithDef(const  std::map <K,V> & m, const K & key, const V & defval ) {
-   typename std::map<K,V>::const_iterator it = m.find( key );
-   if ( it == m.end() ) {
-      return defval;
-   }
-   else {
-      return it->second;
-   }
+	typename std::map<K,V>::const_iterator it = m.find( key );
+	if ( it == m.end() ) {
+		return defval;
+	} else {
+		return it->second;
+	}
 }
 
 ADDRINT CheckCutoff(THREADID tid) {
@@ -214,11 +211,11 @@ ADDRINT CheckCutoff(THREADID tid) {
 	return (tdata._count > SAFTY_CUT);
 }
 
-VOID timestamp(THREADID tid) { 
+VOID timestamp(THREADID tid) {
 	thread_data_t& tdata = local[tid];
 	assert((tdata._count < MAX_EVENTS) && "buffer overflow for page access; increase MAX_EVENTS constant");
 #ifdef COMPRESS_STREAM
-   	boost::iostreams::filtering_ostream& ThreadStream = tdata.ThreadStream;
+	boost::iostreams::filtering_ostream& ThreadStream = tdata.ThreadStream;
 #else
 	ofstream& ThreadStream = tdata.ThreadStream;
 #endif
@@ -246,10 +243,10 @@ VOID timestamp(THREADID tid) {
 		status[0]=-1;
 		void * ptr_to_check = *it;
 		move_pages(0 /*self memory */, 1, &ptr_to_check,  NULL, status, 0);
-		
+
 		ThreadStream << ((unsigned long long)(*it))/pagesize << "\t" << status[0] << "\t" << GetWithDef(page_reads, *it, 0) << "\t" << GetWithDef(page_writes, *it, 0) << "\n";
 	}
-		
+
 	tdata._count = 0;
 }
 
@@ -257,7 +254,7 @@ VOID timestamp(THREADID tid) {
 // Print a memory read access
 VOID PIN_FAST_ANALYSIS_CALL RecordMemRead(ADDRINT  addr, THREADID threadid) {
 	thread_data_t& tdata = local[threadid];
-    memEvents[threadid][tdata._count].read = 1;
+	memEvents[threadid][tdata._count].read = 1;
 	memEvents[threadid][tdata._count].addr = addr;
 	tdata._count = (tdata._count + 1) ;
 }
@@ -265,7 +262,7 @@ VOID PIN_FAST_ANALYSIS_CALL RecordMemRead(ADDRINT  addr, THREADID threadid) {
 VOID PIN_FAST_ANALYSIS_CALL RecordMemWrite(ADDRINT  addr, THREADID threadid) {
 	thread_data_t& tdata = local[threadid];
 //	thread_data_t* tdata = get_tls(threadid);
-    memEvents[threadid][tdata._count].read = 0;
+	memEvents[threadid][tdata._count].read = 0;
 	memEvents[threadid][tdata._count].addr = addr;
 	tdata._count = (tdata._count + 1) ;
 
@@ -276,69 +273,62 @@ VOID PIN_FAST_ANALYSIS_CALL RecordMemWrite(ADDRINT  addr, THREADID threadid) {
 /* ===================================================================== */
 
 
-VOID Routine(RTN rtn, VOID *v)
-{
+VOID Routine(RTN rtn, VOID *v) {
 	// Allocate a counter for this routine
-    RtnName * rc = new RTN_NAME;
+	RtnName * rc = new RTN_NAME;
 
-    // The RTN goes away when the image is unloaded, so save it now
-    // because we need it in the fini
-    rc->_name = RTN_Name(rtn);
-    rc->_image = StripPath(IMG_Name(SEC_Img(RTN_Sec(rtn))).c_str());
-    rc->_address = RTN_Address(rtn);
+	// The RTN goes away when the image is unloaded, so save it now
+	// because we need it in the fini
+	rc->_name = RTN_Name(rtn);
+	rc->_image = StripPath(IMG_Name(SEC_Img(RTN_Sec(rtn))).c_str());
+	rc->_address = RTN_Address(rtn);
 	MallocFile << rc->_address << " " << rc->_image.c_str() << " " << rc->_name.c_str() << endl;
 }
 
-VOID Trace(TRACE trace, VOID *v)
-{
+VOID Trace(TRACE trace, VOID *v) {
 	TRACE_InsertIfCall(trace, IPOINT_BEFORE, (AFUNPTR)CheckCutoff, IARG_THREAD_ID, IARG_END);
 	TRACE_InsertThenCall(trace, IPOINT_BEFORE, (AFUNPTR)timestamp, IARG_THREAD_ID, IARG_END);
 }
 
-   
-// Is called for every instruction and instruments reads and writes
-VOID Instruction(INS ins, VOID *v)
-{
-    // Instruments memory accesses using a predicated call, i.e.
-    // the instrumentation is called iff the instruction will actually be executed.
-    //
-    // The IA-64 architecture has explicitly predicated instructions. 
-    // On the IA-32 and Intel(R) 64 architectures conditional moves and REP 
-    // prefixed instructions appear as predicated instructions in Pin.
-    UINT32 memOperands = INS_MemoryOperandCount(ins);
 
-    // Iterate over each memory operand of the instruction.
-    for (UINT32 memOp = 0; memOp < memOperands; memOp++)
-    {
-        if (INS_MemoryOperandIsRead(ins, memOp))
-        {
-            INS_InsertPredicatedCall(
-                ins, IPOINT_BEFORE, (AFUNPTR)RecordMemRead,
-				IARG_FAST_ANALYSIS_CALL,
-	            IARG_MEMORYOP_EA, memOp, 
-				IARG_THREAD_ID,
-				IARG_END);
-        }
-        // Note that in some architectures a single memory operand can be 
-        // both read and written (for instance incl (%eax) on IA-32)
-        // In that case we instrument it once for read and once for write.
-        if (INS_MemoryOperandIsWritten(ins, memOp))
-        {
-            INS_InsertPredicatedCall(
-                ins, IPOINT_BEFORE, (AFUNPTR)RecordMemWrite,
-				IARG_FAST_ANALYSIS_CALL,
-			    IARG_MEMORYOP_EA, memOp, 
-				IARG_THREAD_ID,
-				IARG_END);
-        }
-    }
+// Is called for every instruction and instruments reads and writes
+VOID Instruction(INS ins, VOID *v) {
+	// Instruments memory accesses using a predicated call, i.e.
+	// the instrumentation is called iff the instruction will actually be executed.
+	//
+	// The IA-64 architecture has explicitly predicated instructions.
+	// On the IA-32 and Intel(R) 64 architectures conditional moves and REP
+	// prefixed instructions appear as predicated instructions in Pin.
+	UINT32 memOperands = INS_MemoryOperandCount(ins);
+
+	// Iterate over each memory operand of the instruction.
+	for (UINT32 memOp = 0; memOp < memOperands; memOp++) {
+		if (INS_MemoryOperandIsRead(ins, memOp)) {
+			INS_InsertPredicatedCall(
+			    ins, IPOINT_BEFORE, (AFUNPTR)RecordMemRead,
+			    IARG_FAST_ANALYSIS_CALL,
+			    IARG_MEMORYOP_EA, memOp,
+			    IARG_THREAD_ID,
+			    IARG_END);
+		}
+		// Note that in some architectures a single memory operand can be
+		// both read and written (for instance incl (%eax) on IA-32)
+		// In that case we instrument it once for read and once for write.
+		if (INS_MemoryOperandIsWritten(ins, memOp)) {
+			INS_InsertPredicatedCall(
+			    ins, IPOINT_BEFORE, (AFUNPTR)RecordMemWrite,
+			    IARG_FAST_ANALYSIS_CALL,
+			    IARG_MEMORYOP_EA, memOp,
+			    IARG_THREAD_ID,
+			    IARG_END);
+		}
+	}
 }
 
 /* ===================================================================== */
 
-VOID Fini(INT32 code, VOID *v)
-{
-    MallocFile.close();
+VOID Fini(INT32 code, VOID *v) {
+	MallocFile.close();
 
 	for (int i = 0; i < (int)memEvents.size(); i++) {
 		free(memEvents[i]);
@@ -348,56 +338,53 @@ VOID Fini(INT32 code, VOID *v)
 /* ===================================================================== */
 /* Print Help Message                                                    */
 /* ===================================================================== */
-   
-INT32 Usage()
-{
-    cerr << "This tool produces a trace of calls to malloc." << endl;
-    cerr << endl << KNOB_BASE::StringKnobSummary() << endl;
-    return -1;
+
+INT32 Usage() {
+	cerr << "This tool produces a trace of calls to malloc." << endl;
+	cerr << endl << KNOB_BASE::StringKnobSummary() << endl;
+	return -1;
 }
 
 /* ===================================================================== */
 /* Main                                                                  */
 /* ===================================================================== */
 
-int main(int argc, char *argv[])
-{
+int main(int argc, char *argv[]) {
 
 	pagesize = getpagesize();
-    // Initialize pin & symbol manager
-    PIN_InitSymbols();
-    if( PIN_Init(argc,argv) )
-    {
-        return Usage();
-    }
+	// Initialize pin & symbol manager
+	PIN_InitSymbols();
+	if( PIN_Init(argc,argv) ) {
+		return Usage();
+	}
 
 	// Initialize the pin lock
-    InitLock(&lock);
+	InitLock(&lock);
 
- 
-    // Write to a file since cout and cerr maybe closed by the application
-    MallocFile.open(KnobOutputFile.Value().c_str());
-  //  MallocFile << hex;
-  //  MallocFile.setf(ios::showbase);
-    
+
+	// Write to a file since cout and cerr maybe closed by the application
+	MallocFile.open(KnobOutputFile.Value().c_str());
+	//  MallocFile << hex;
+	//  MallocFile.setf(ios::showbase);
+
 	MallocFile << "Page size: " << pagesize << "\n";
 
-    // Register Image to be called to instrument functions.
-    INS_AddInstrumentFunction(Instruction, 0);
+	// Register Image to be called to instrument functions.
+	INS_AddInstrumentFunction(Instruction, 0);
 	TRACE_AddInstrumentFunction(Trace, 0);
-    PIN_AddFiniFunction(Fini, 0);
+	PIN_AddFiniFunction(Fini, 0);
 
 	// Register Analysis routines to be called when a thread begins/ends
-    PIN_AddThreadStartFunction(ThreadStart, 0);
+	PIN_AddThreadStartFunction(ThreadStart, 0);
 	PIN_AddThreadFiniFunction(ThreadStop, 0);
 
 
 
-    // Never returns
+	// Never returns
 	gettimeofday(&start, NULL);
-    PIN_StartProgram();
-    
-    return 0;
+	PIN_StartProgram();
+
+	return 0;
 }
 
 /* ===================================================================== */
