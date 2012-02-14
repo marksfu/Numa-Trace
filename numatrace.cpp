@@ -66,11 +66,21 @@ KNOB<BOOL> KnobProcessBuffer(KNOB_MODE_WRITEONCE, "pintool", "process_buffs", "1
 KNOB<UINT32> KnobNumPagesInBuffer(KNOB_MODE_WRITEONCE, "pintool", "num_pages_in_buffer", "256", "number of pages in buffer");
 
 
+class thread_data_t {
+public:
+#ifdef COMPRESS_STREAM
+	boost::iostreams::filtering_ostream ThreadStream;
+#else
+	ofstream ThreadStream;
+#endif
+	UINT8 _pad[PADSIZE];
+};
+
 /* Struct of memory reference written to the buffer
  */
 struct MEMREF
 {
-    ADDRINT pc;
+    ADDRINT read;
     ADDRINT ea;
 	THREADID tid;
 };
@@ -138,7 +148,7 @@ VOID APP_THREAD_REPRESENTITVE::ProcessBuffer(VOID *buf, UINT64 numElements)
 	UINT64 until = numElements;
     for(UINT64 i=0; i<until; i++, memref++)
     {
-        firstMemref->pc += memref->pc + memref->ea;
+        firstMemref->read += memref->read + memref->ea;
     }
     _numElementsProcessed += (UINT32)until;
      //printf ("numElements processed %d\n", (UINT32)numElements);
@@ -165,14 +175,14 @@ VOID Trace(TRACE trace, VOID *v)
             {
 				if (INS_MemoryOperandIsRead(ins, memOp)) {
                     INS_InsertFillBuffer(ins, IPOINT_BEFORE, bufId,
-                                             IARG_INST_PTR, offsetof(struct MEMREF, pc),
+                                             IARG_PTR, 1, offsetof(struct MEMREF, read),
                                              IARG_MEMORYOP_EA, memOp, offsetof(struct MEMREF, ea),
 											IARG_THREAD_ID, offsetof(struct MEMREF, tid),
                                              IARG_END);
 				}
 				if (INS_MemoryOperandIsWritten(ins, memOp)) {
                     INS_InsertFillBuffer(ins, IPOINT_BEFORE, bufId,
-                                             IARG_INST_PTR, offsetof(struct MEMREF, pc),
+                                             IARG_PTR, 0, offsetof(struct MEMREF, read),
                                              IARG_MEMORYOP_EA, memOp, offsetof(struct MEMREF, ea),
 											IARG_THREAD_ID, offsetof(struct MEMREF, tid),
                                              IARG_END);
