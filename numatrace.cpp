@@ -110,7 +110,6 @@ struct MEMREF
 {
     BOOL read;
     ADDRINT ea;
-	THREADID tid;
 };
 
 // The buffer ID returned by the one call to PIN_DefineTraceBuffer
@@ -175,51 +174,7 @@ V GetWithDef(const  std::map <K,V> & m, const K & key, const V & defval ) {
 
 VOID APP_THREAD_REPRESENTITVE::ProcessBuffer(VOID *buf, UINT64 numElements)
 {
-    _numBuffersFilled++;
-    //printf ("numElements %d\n", (UINT32)numElements);
-    
-    if (!KnobProcessBuffer )
-    {
-        return;
-    }
-    if (numElements < 1) {
-		return;
-	}
-	
-    struct MEMREF * memref=(struct MEMREF*)buf;
-    struct MEMREF * firstMemref = memref;
 
-	int tid = firstMemref->tid;
-	thread_data_t* tdata = localStore[tid];
-	#ifdef COMPRESS_STREAM
-		boost::iostreams::filtering_ostream& ThreadStream = tdata->ThreadStream;
-	#else
-		ofstream& ThreadStream = tdata->ThreadStream;
-	#endif
-		std::set<void*> pages;
-		std::map<void*,int> page_reads;
-		std::map<void*,int> page_writes;
-	UINT64 until = numElements;
-    for(UINT64 i=0; i<until; i++, memref++)
-    {
-		void* page = (void*)((unsigned long long)(memref->ea) & ~(pagesize-1));
-		pages.insert(page);
-		if (memref->read) {
-			page_reads[page] = GetWithDef(page_reads, page, 0) + 1;
-		} else {
-			page_writes[page] = GetWithDef(page_writes, page, 0) + 1;
-		}
-        
-    }
-	for (std::set<void*>::iterator it = pages.begin(); it != pages.end(); it++) {
-		int status[1];
-		status[0]=-1;
-		void * ptr_to_check = *it;
-		move_pages(0 /*self memory */, 1, &ptr_to_check,  NULL, status, 0);
-
-		ThreadStream << ((unsigned long long)(*it))/pagesize << "\t" << status[0] << "\t" << GetWithDef(page_reads, *it, 0) << "\t" << GetWithDef(page_writes, *it, 0) << "\n";
-	}
-    _numElementsProcessed += (UINT32)until;
      //printf ("numElements processed %d\n", (UINT32)numElements);
 }
 
@@ -246,15 +201,13 @@ VOID Trace(TRACE trace, VOID *v)
                     INS_InsertFillBuffer(ins, IPOINT_BEFORE, bufId,
                                              IARG_BOOL, TRUE, offsetof(struct MEMREF, read),
                                              IARG_MEMORYOP_EA, memOp, offsetof(struct MEMREF, ea),
-											IARG_THREAD_ID, offsetof(struct MEMREF, tid),
-                                             IARG_END);
+		                                     IARG_END);
 				}
 				if (INS_MemoryOperandIsWritten(ins, memOp)) {
                     INS_InsertFillBuffer(ins, IPOINT_BEFORE, bufId,
                                              IARG_BOOL, FALSE, offsetof(struct MEMREF, read),
                                              IARG_MEMORYOP_EA, memOp, offsetof(struct MEMREF, ea),
-											IARG_THREAD_ID, offsetof(struct MEMREF, tid),
-                                             IARG_END);
+		                                  IARG_END);
 				}
             }
         }
@@ -293,9 +246,46 @@ VOID * BufferFull(BUFFER_ID id, THREADID tid, const CONTEXT *ctxt, VOID *buf,
 		gettimeofday(&stamp, NULL);
 		// print core and time stamp
 		ThreadStream << cpuid << "\t" << stamp.tv_sec - start.tv_sec << "\t" << stamp.tv_usec << endl;
-    APP_THREAD_REPRESENTITVE * appThreadRepresentitive = static_cast<APP_THREAD_REPRESENTITVE*>( PIN_GetThreadData( appThreadRepresentitiveKey, tid ) );
+  //  APP_THREAD_REPRESENTITVE * appThreadRepresentitive = static_cast<APP_THREAD_REPRESENTITVE*>( PIN_GetThreadData( appThreadRepresentitiveKey, tid ) );
 
-    appThreadRepresentitive->ProcessBuffer(buf, numElements);
+
+//	_numBuffersFilled++;
+    //printf ("numElements %d\n", (UINT32)numElements);
+    
+    if (!KnobProcessBuffer )
+    {
+        return buf;
+    }
+    if (numElements < 1) {
+		return buf;
+	}
+	
+    struct MEMREF * memref=(struct MEMREF*)buf;
+    
+		std::set<void*> pages;
+		std::map<void*,int> page_reads;
+		std::map<void*,int> page_writes;
+	UINT64 until = numElements;
+    for(UINT64 i=0; i<until; i++, memref++)
+    {
+		void* page = (void*)((unsigned long long)(memref->ea) & ~(pagesize-1));
+		pages.insert(page);
+		if (memref->read) {
+			page_reads[page] = GetWithDef(page_reads, page, 0) + 1;
+		} else {
+			page_writes[page] = GetWithDef(page_writes, page, 0) + 1;
+		}
+        
+    }
+	for (std::set<void*>::iterator it = pages.begin(); it != pages.end(); it++) {
+		int status[1];
+		status[0]=-1;
+		void * ptr_to_check = *it;
+		move_pages(0 /*self memory */, 1, &ptr_to_check,  NULL, status, 0);
+
+		ThreadStream << ((unsigned long long)(*it))/pagesize << "\t" << status[0] << "\t" << GetWithDef(page_reads, *it, 0) << "\t" << GetWithDef(page_writes, *it, 0) << "\n";
+	}
+  //  _numElementsProcessed += (UINT32)until;
     
     return buf;
 }
