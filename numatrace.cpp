@@ -88,7 +88,7 @@ PIN_LOCK lock;
 
 KNOB<BOOL> KnobProcessBuffer(KNOB_MODE_WRITEONCE, "pintool", "process_buffs", "1", "process the filled buffers");
 // 256*4096=1048576 - same size buffer in memtrace_simple, membuffer_simple, membuffer_multi
-KNOB<UINT32> KnobNumPagesInBuffer(KNOB_MODE_WRITEONCE, "pintool", "num_pages_in_buffer", "256", "number of pages in buffer");
+KNOB<UINT32> KnobNumPagesInBuffer(KNOB_MODE_WRITEONCE, "pintool", "num_pages_in_buffer", "40", "number of pages in buffer");
 
 #define PADSIZE 64
 class thread_data_t {
