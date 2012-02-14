@@ -226,7 +226,7 @@ ADDRINT CheckCutoff(THREADID tid) {
 
 VOID timestamp(THREADID tid) {
 	thread_data_t* tdata = localStore[tid];
-	assert((tdata->_count < bufferArraySize) && "buffer overflow for page access; increase MAX_EVENTS constant");
+	assert((tdata->_count < bufferArraySize) && "buffer overflow for page access; increase buffer runover value -r");
 #ifdef COMPRESS_STREAM
 	boost::iostreams::filtering_ostream& ThreadStream = tdata->ThreadStream;
 #else
