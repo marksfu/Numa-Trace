@@ -88,7 +88,9 @@ PIN_LOCK lock;
 
 KNOB<BOOL> KnobProcessBuffer(KNOB_MODE_WRITEONCE, "pintool", "process_buffs", "1", "process the filled buffers");
 // 256*4096=1048576 - same size buffer in memtrace_simple, membuffer_simple, membuffer_multi
-KNOB<UINT32> KnobNumPagesInBuffer(KNOB_MODE_WRITEONCE, "pintool", "num_pages_in_buffer", "40", "number of pages in buffer");
+KNOB<UINT32> KnobNumPagesInBuffer(KNOB_MODE_WRITEONCE, "pintool", "events", "10000", "approximate number of events to buffer");
+
+KNOB<UINT32> KnobNumEventsInBuffer(KNOB_MODE_WRITEONCE, "pintool", "events", "10000", "approximate number of events to buffer");
 
 #define PADSIZE 64
 class thread_data_t {
@@ -390,7 +392,12 @@ int main(int argc, char *argv[])
     //printf ("buffer size in bytes 0x%x\n", KnobNumPagesInBuffer.Value()*4096);
     //	fflush (stdout);
     
-    bufId = PIN_DefineTraceBuffer(sizeof(struct MEMREF), KnobNumPagesInBuffer,
+	UINT32 bufferPages = (UINT32) ((KnobNumEventsInBuffer * sizeof(MEMREF)) / pagesize);
+	if (bufferPages == 0) {
+		bufferPages = 1;
+	}
+
+    bufId = PIN_DefineTraceBuffer(sizeof(struct MEMREF), bufferPages,
                                   BufferFull, 0);
 
     if(bufId == BUFFER_ID_INVALID)
