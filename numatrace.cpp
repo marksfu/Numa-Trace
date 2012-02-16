@@ -29,8 +29,32 @@ THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 END_LEGAL */
 /*
+ * numatrace.cpp 
+ * author: Mark Roth (mr.mark.roth@gmail.com, mroth@sfu.ca)
+ * This tool is used to record memory interconnect traffic
+ * of numa domains. For each memory access, the thread id,
+ * core id, and numa domain of memory is recorded. The 
+ * recording granularity is per page and results are
+ * summarized in chunks of 10000 memory events per thread.
+ * This value can be specified by the user using the
+ * --events flag
+ * The results are stored in a per thread file. The file 
+ * format is as follows:
  *
-
+ * Each line will contain tab deliminated data of
+ * either 3 items or 4. If there are 3 items, the format is
+ *
+ * CPU_ID	SEC	NSEC
+ *
+ * If there are 4 items, the format is
+ *
+ * PAGE_ID	NUMA_ID	#READS	#WRITES
+ * 
+ * The tool can be compiled to make use of a compressed
+ * file stream by defining the COMPRESS_STREAM flag
+ *
+ * Use:
+ * make COMPRESS_STREAM=1
  *
  */
 
@@ -225,6 +249,8 @@ VOID * BufferFull(BUFFER_ID id, THREADID tid, const CONTEXT *ctxt, VOID *buf,
 	struct MEMREF * memref=(struct MEMREF*)buf;
 	std::map<void*, MEMCNT> pages;
 	UINT64 until = numElements;
+	// check each memory reference and convert it
+	// to page id. track reads and write per page
 	for(UINT64 i=0; i<until; i++, memref++) {
 		void* page = (void*)((unsigned long long)(memref->ea) & ~(pagesize-1));
 		std::map<void*, MEMCNT>::iterator it = pages.find( page );
@@ -243,6 +269,8 @@ VOID * BufferFull(BUFFER_ID id, THREADID tid, const CONTEXT *ctxt, VOID *buf,
 		}
 
 	}
+	// for each page, look up which numa domain it belongs to
+	// print the page id, numa domain, # reads, # writes
 	for (std::map<void*, MEMCNT>::iterator it = pages.begin(); it != pages.end(); it++) {
 		int status[1];
 		status[0]=-1;
@@ -251,8 +279,7 @@ VOID * BufferFull(BUFFER_ID id, THREADID tid, const CONTEXT *ctxt, VOID *buf,
 
 		ThreadStream << ((unsigned long long)(it->first))/pagesize << "\t" << status[0] << "\t" << it->second.read << "\t" << it->second.write << "\n";
 	}
-	//  _numElementsProcessed += (UINT32)until;
-
+	// return the buffer to start filling
 	return buf;
 }
 
