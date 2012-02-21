@@ -101,6 +101,7 @@ PIN_LOCK lock;
 
 
 KNOB<UINT32> KnobNumEventsInBuffer(KNOB_MODE_WRITEONCE, "pintool", "events", "10000", "approximate number of events to buffer");
+KNOB<string> KnobOutputFilePrefix(KNOB_MODE_WRITEONCE, "pintool", "o", "thread", "specify output file name prefix");
 
 #define PADSIZE 64
 class thread_data_t {
@@ -299,12 +300,12 @@ VOID ThreadStart(THREADID tid, CONTEXT *ctxt, INT32 flags, VOID *v) {
 	thread_data_t* tdata = localStore[tid];
 	char file[80];
 #ifdef COMPRESS_STREAM
-	sprintf(file, "thread_%i.dat.gz", tid);
+	sprintf(file, "%s_%i.dat.gz", KnobOutputFilePrefix.Value().c_str(), tid);
 	boost::iostreams::filtering_ostream& ThreadStream = tdata->ThreadStream;
 	ThreadStream.push(boost::iostreams::gzip_compressor());
 	ThreadStream.push(boost::iostreams::file_sink(file, ios_base::out | ios_base::binary));
 #else
-	sprintf(file, "thread_%i.dat", tid);
+	sprintf(file, "%s_%i.dat", KnobOutputFilePrefix.Value().c_str(), tid);
 	tdata->ThreadStream.open(file);
 #endif
 	ReleaseLock(&lock);
