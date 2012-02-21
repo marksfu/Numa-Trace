@@ -1,0 +1,15 @@
+copy thread output to data/ directory
+
+sample contents of core config file (quatchi.core.config)
+0       0,4,8,12,16,20
+1       1,5,9,13,17,21
+2       2,6,10,14,18,22
+3       3,7,11,15,19,23
+
+pypy makeMovieData.py quatchi.core.config data/ 100000 > movie.txt
+pypy movieStats.py movie.txt movieOutput/
+cd movieOutput
+for f in *.dot; do neato -Tpng $f -o ${f%.dot}.png; done;
+for f in *.png; do convert $f -background white -gravity center -extent 500x500! out.png ; mv out.png $f; done;
+mencoder mf://*.png -mf w=500:h=500:fps=30:type=png -ovc lavc -lavcopts vcodec=mpeg4:mbd=2:trell -oac copy -o output.avi
+
