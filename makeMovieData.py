@@ -2,7 +2,7 @@ import sys, collections, os, gzip
 
 MILLION = 1000000
 
-[configFileName, inputDir, timeStep] = sys.argv[1:4]
+[configFileName, inputDir, timeStep, smooth] = sys.argv[1:5]
 
 timeStep = int(timeStep)
 configFile = open(configFileName)
@@ -69,14 +69,27 @@ def processDataFile(inputFileName):
 for filename in os.listdir(inputDir):
 	processDataFile(inputDir + "/" + filename)
 
-for f in frame:
-	print f
-	for n in nodes:
-		print n, "r", len(frame[f].nodeReadPages[n]) 
-		print n, "w", len(frame[f].nodeWritePages[n])
-	for cpuNode in nodes:
-		for memNode in nodes:
-			print cpuNode, memNode, "r", frame[f].nodeReads[(cpuNode, memNode)]
-			print cpuNode, memNode, "w", frame[f].nodeWrites[(cpuNode, memNode)]
+smooth = int(smooth)
+for i in range(len(frame) - 1):
+	for k in range(smooth):
+		aIdx = i
+		bIdx = i+1
+		f = i*smooth + k
+		print f
+		for n in nodes:
+			aReads = len(frame[aIdx].nodeReadPages[n]) 
+			bReads = len(frame[bIdx].nodeReadPages[n]) 
+			aWrites = len(frame[aIdx].nodeWritePages[n])
+			bWrites = len(frame[bIdx].nodeWritePages[n])
+			print n, "r", (aReads*(smooth-k) + bReads*k)/smooth
+			print n, "w", (aWrites*(smooth-k) + bWrites*k)/smooth
+		for cpuNode in nodes:
+			for memNode in nodes:
+				aReads = frame[aIdx].nodeReads[(cpuNode, memNode)]
+				bReads = frame[bIdx].nodeReads[(cpuNode, memNode)]
+				aWrites = frame[aIdx].nodeWrites[(cpuNode, memNode)]
+				bWrites = frame[bIdx].nodeWrites[(cpuNode, memNode)]
+				print cpuNode, memNode, "r", (aReads*(smooth-k) + bReads*k)/smooth
+				print cpuNode, memNode, "w", (aWrites*(smooth-k) + bWrites*k)/smooth
 
 
