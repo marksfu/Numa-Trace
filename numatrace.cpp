@@ -254,15 +254,8 @@ VOID * BufferFull(BUFFER_ID id, THREADID tid, const CONTEXT *ctxt, VOID *buf,
 	// to page id. track reads and write per page
 	for(UINT64 i=0; i<until; i++, memref++) {
 		void* page = (void*)((unsigned long long)(memref->ea) & ~(pagesize-1));
-		std::map<void*, MEMCNT>::iterator it = pages.find( page );
-		if ( it == pages.end() ) {
-			MEMCNT tmp;
-			tmp.read = 0;
-			tmp.write = 0;
-			pages[page] = tmp;
-			it = pages.find( page );
-		}
-		MEMCNT& pageCnt = it->second;
+		// standard new page counts are guarenteed to be 0 as per the STL standard
+		MEMCNT& pageCnt = pages[page];
 		if (memref->read) {
 			pageCnt.read += 1;
 		} else {
