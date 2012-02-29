@@ -10,6 +10,7 @@
 
 LIBS = -lnuma
 
+
 ifdef COMPRESS_STREAM
 	LIBS += -lboost_iostreams
 	CXXFLAGS += -DCOMPRESS_STREAM
