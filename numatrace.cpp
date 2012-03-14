@@ -241,7 +241,7 @@ VOID * BufferFull(BUFFER_ID id, THREADID tid, const CONTEXT *ctxt, VOID *buf,
 	struct timeval stamp;
 	gettimeofday(&stamp, NULL);
 	// print core and time stamp
-	ThreadStream << cpuid << "\t" << stamp.tv_sec - start.tv_sec << "\t" << stamp.tv_usec << endl;
+	ThreadStream << cpuid << '\t' << stamp.tv_sec - start.tv_sec << '\t' << stamp.tv_usec << '\t' << -1 << endl;
 
 	if (numElements < 1) {
 		return buf;
@@ -271,7 +271,7 @@ VOID * BufferFull(BUFFER_ID id, THREADID tid, const CONTEXT *ctxt, VOID *buf,
 		void * ptr_to_check = it->first;
 		move_pages(0 /*self memory */, 1, &ptr_to_check,  NULL, status, 0);
 
-		ThreadStream << ((unsigned long long)(it->first))/pagesize << "\t" << status[0] << "\t" << it->second.read << "\t" << it->second.write << "\n";
+		ThreadStream << ((unsigned long long)(it->first))/pagesize << '\t' << status[0] << '\t' << it->second.read << '\t' << it->second.write << "\n";
 	}
 	// return the buffer to start filling
 	return buf;
@@ -301,6 +301,7 @@ VOID ThreadStart(THREADID tid, CONTEXT *ctxt, INT32 flags, VOID *v) {
 	sprintf(file, "%s_%i.dat", KnobOutputFilePrefix.Value().c_str(), tid);
 	tdata->ThreadStream.open(file);
 #endif
+	tdata->ThreadStream << tid << '\t' << -1 << '\t' << -1 << '\t' << -1 << endl;
 	ReleaseLock(&lock);
 }
 
