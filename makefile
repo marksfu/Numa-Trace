@@ -43,7 +43,7 @@ TOOLS = $(TOOL_ROOTS:%=$(OBJDIR)%$(PINTOOL_SUFFIX))
 
 SANITY_TOOLS = 
 
-all: tools pageReadWriteSummary
+all: tools pageReadWriteSummary summarizeInterconnect
 tools: $(OBJDIR) $(TOOLS) 
 test: $(OBJDIR) $(TOOL_ROOTS:%=%.test)
 #tests-sanity: $(OBJDIR) $(SANITY_TOOLS:%=%.test)
