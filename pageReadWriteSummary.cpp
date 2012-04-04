@@ -53,7 +53,7 @@ void processThreadEntry(int pid) {
 void processTimeStampEntry(int core, int sec, int usec) {
     assert((activeThread >= 0) && "thread id is not set");
     unsigned long long time = MILLION*sec + usec;
-    activeTimeWindow = (timeWindow_t)(time / TIME_WINDOW_LENGTH_uS);
+    activeTimeWindow = (timeWindow_t)(time / timeWindowLength);
     activePageRecords = &(timeWindows[activeTimeWindow]);
 }
 

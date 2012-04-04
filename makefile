@@ -36,20 +36,24 @@ ifeq ($(TARGET_COMPILER),gnu)
 endif
 
 SPECIALRUN = 
-NORMALRUN = numatrace
+NORMALRUN = numatrace directMemRatio
 TOOL_ROOTS = $(SPECIALRUN) $(NORMALRUN)
 
 TOOLS = $(TOOL_ROOTS:%=$(OBJDIR)%$(PINTOOL_SUFFIX))
 
 SANITY_TOOLS = 
 
-all: tools 
+all: tools pageReadWriteSummary
 tools: $(OBJDIR) $(TOOLS) 
 test: $(OBJDIR) $(TOOL_ROOTS:%=%.test)
 #tests-sanity: $(OBJDIR) $(SANITY_TOOLS:%=%.test)
 
 ## special testing rules
 
+## analysis tools
+
+%: %.cpp
+	$(CXX) $(CXXFLAGS) -std=c++0x -o $@ $<
 
 ## build rules
 $(OBJDIR):

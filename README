@@ -1,15 +1,44 @@
-copy thread output to data/ directory
+Build:
+make
 
-sample contents of core config file (quatchi.core.config)
-0       0,4,8,12,16,20
-1       1,5,9,13,17,21
-2       2,6,10,14,18,22
-3       3,7,11,15,19,23
+or 
 
-pypy makeMovieData.py quatchi.core.config data/ 100000 > movie.txt
-pypy movieStats.py movie.txt movieOutput/
-cd movieOutput
-for f in *.dot; do neato -Tpng $f -o ${f%.dot}.png; done;
-for f in *.png; do convert $f -background white -gravity center -extent 500x500! out.png ; mv out.png $f; done;
-mencoder mf://*.png -mf w=500:h=500:fps=30:type=png -ovc lavc -lavcopts vcodec=mpeg4:mbd=2:trell -oac copy -o output.avi
+make COMPRESS_STREAM=1
+
+This will compress the output stream to a gz file to save space. Requires boost library to be installed.
+
+Usage:
+1. Gather trace information
+PATH_TO_PIN/pin -t PATH_TO_TOOL/obj-intel64/numatrace.so -- PATH_TO_BINARY_TO_TRACE/binary
+
+2. The above command will generate trace files labeled thread_x.dat or thread_x.dat.gz if compression is enabled
+
+3. run through analysis tool
+
+e.g.
+zcat thread_*.dat.gz | ./pageReadWriteSummary
+
+Anslaysis Tools:
+
+pageReadWriteSummary - Divides the execution period into descreate time frames (default is 1 second of pin running time), and calculates the total number of shared read, shared write, private read and private write pages; along with total pages written and read.
+
+
+Data Format:
+Each line contains 4 columns of number with.
+The first line of the data file contains the thread id in column 1 with the rest of the columns set to -1
+e.g.
+
+THREAD_ID	-1	-1	-1
+
+The rest of the data is split into time frames. The start of the time frame is inicated by 3 positive numbers in the first 3 columns and the last column set to -1. The format is as follows:
+
+CPU_ID	SEC	USEC	-1
+
+CPU_ID is the cpu which the thread was running on for that time frame, SEC is the number of seconds since the start of the program. USEC is the microsecond component of the time.
+
+The data within each time frame tracks the number of reads and writes to particular pages along with the numa domain that the page resides on.
+
+PAGE_ID	NUMA_NODE	READS	WRITES
+
+The PAGE_ID field is of type UINT_64 and therefore column 1 must always be read as unsigned long long.
 
