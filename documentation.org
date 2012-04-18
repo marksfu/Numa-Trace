@@ -19,14 +19,14 @@ changes the prefix of the file. Default is "thread".
 
 eg.
 
-PATH_TO_PIN/pin -t PATH_TO_TOOL/numatrace.so -o streamcluster -- binaryFileToRecor
+PATH_TO_PIN/pin -t PATH_TO_TOOL/numatrace.so -o streamcluster -- binaryFileToRecord
 *** Memory event buffer
 -events #ofMemEventsToBuffer
 changes the PIN buffer size. The memory accesses are tallied once per buffer refill.
 
 e.g.
 
-PATH_TO_PIN/pin -t PATH_TO_TOOL/numatrace.so -events 1000000 -- binaryFileToRecor
+PATH_TO_PIN/pin -t PATH_TO_TOOL/numatrace.so -events 1000000 -- binaryFileToRecord
 
 * Data Format
 The pin tool will create a separte data file for each thread in order to avoid locking. For every 10000 memory operations, the tool will print a timestamp along with the current core that the thread is executing on to the data file. After the time stamp is printed, the number of read and writes for every unique page along with the NUMA id which the page resides on will be recorded.
@@ -67,11 +67,13 @@ zcat *.dat.gz | ./pageReadWriteSummary
 ** summarizeInterconnect
 For each 1 second of PIN time this tool will print the number of reads and writes from one NUMA domain to another. 
 
-Requires a configuration file describing the numa layout. Numa layout configuration has the following format: Each numa domain is described by 1 line. The first number is the NUMA ID followed by a tab. The cores belonging to that domain are then listed separated by a single comma
+Requires a configuration file describing the numa layout. Numa layout configuration has the following format: Each numa domain is described by 1 line. The first number is the NUMA ID followed by the cores belonging to that domain. Each number is separated by a single space. The file can be generated using numactl:
+
+numactl --hardware | grep cpus | cut -d" " -f2,4-
 
 Format:
-node\tcore,core,core,...
-node\tcore,core,core,...
+node core core core ...
+node core core core ...
 
 See quatchi.config for an example configuration file.
 
