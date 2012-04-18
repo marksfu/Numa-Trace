@@ -124,9 +124,13 @@ void printOutput() {
 
 /**
  * Initializes NUMA layout from configuration file.
+ * 
+ * Create using:
+ * numactl --hardware | grep cpus | cut -d" " -f2,4- > layout.config
+ * 
  * Format:
- * node\tcore,core,core,...
- * node\tcore,core,core,...
+ * node core core core ...
+ * node core core core ...
  */
 void loadNumaConfigurationFile(const char* filename, map<Core_t, Node_t>* _numaMap) {
     auto& numaMap = *_numaMap;
@@ -141,17 +145,12 @@ void loadNumaConfigurationFile(const char* filename, map<Core_t, Node_t>* _numaM
 	if (line.length() < 1) {
 	    continue;
 	}
-	string nodeStr = line.substr(0,line.find('\t'));
-	Node_t n = (Node_t)atoi(nodeStr.c_str());
-	string coresLineStr = line.substr(line.find('\t')+1);
-	
-	auto cores = split(coresLineStr, ',');
-	for (auto cStr : cores) {
-	    Core_t c = (Core_t)atoi(cStr.c_str());
-	    numaMap[c] = n;
-	    //cout << c << "\t" << n << endl;
-	}
-	
+	auto cores = split(line, ' ');
+	Node_t n = (Node_t)atoi(cores[0].c_str());
+	for (uint i = 1; i < cores.size(); i++) {
+	    Core_t c = (Core_t)atoi(cores[i].c_str());
+	    numaMap[c] = n;   
+	}	
     }
     numaFile.close();
 }
