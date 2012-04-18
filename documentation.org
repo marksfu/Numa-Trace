@@ -1,0 +1,87 @@
+* Introduction
+This package contains a PIN tool and additional analysis tools for NUMA memory accesses. The PIN tool is used to generate intermediate data files while the analysis tools use the data gathered by pin to summarize the data.
+
+* Building
+use make to build
+
+or
+
+make COMPRESS_STREAM=1
+This option enables data compression using the gzip protocal. Requires the boost library (http://www.boost.org/)
+* Collecting data
+Use the following command to collect the pin data
+PATH_TO_PIN/pin -t PATH_TO_TOOL/numatrace.so -- binaryFileToRecord
+
+** Options
+*** File prefix
+-o filePrefix
+changes the prefix of the file. Default is "thread". 
+
+eg.
+
+PATH_TO_PIN/pin -t PATH_TO_TOOL/numatrace.so -o streamcluster -- binaryFileToRecor
+*** Memory event buffer
+-events #ofMemEventsToBuffer
+changes the PIN buffer size. The memory accesses are tallied once per buffer refill.
+
+e.g.
+
+PATH_TO_PIN/pin -t PATH_TO_TOOL/numatrace.so -events 1000000 -- binaryFileToRecor
+
+* Data Format
+The pin tool will create a separte data file for each thread in order to avoid locking. For every 10000 memory operations, the tool will print a timestamp along with the current core that the thread is executing on to the data file. After the time stamp is printed, the number of read and writes for every unique page along with the NUMA id which the page resides on will be recorded.
+
+There are no headers to the data file. Each line contains 4  values separted by the tab character '\t'. 
+
+The first line of the data file will contain the thread id value followed by three -1 values.
+
+THREAD_ID\t-1\t-1\t-1
+
+Timestamps have the following structure:
+
+CPU_ID\tSEC\tNSEC\t-1
+
+All page entries will be associated with the most recent timestamp that appears above it. Page entries are as follows:
+
+PAGE_ID\tNUMA_ID\t#READS\t#WRITES
+
+* Analysis Tools
+** General usage
+The analysis tools follow a general patter of reading from stdin. This allows for data processing during data decompression.
+
+e.g.
+
+zcat *.dat.gz | ./tool toolOptions > toolOutput
+** pageReadWriteSummary
+For each 1 second of PIN time this tool will  print out the number of reads and writes, along with the number of private and shared read and write pages.
+
+Output is tab deliminated with header row. 
+
+Header:
+"Time Frame\tPages Read\tPages Written\tPrivate Read Only\tShared Read Only\tPrivate Write\tShared Write"
+
+example
+
+zcat *.dat.gz | ./pageReadWriteSummary
+
+** summarizeInterconnect
+For each 1 second of PIN time this tool will print the number of reads and writes from one NUMA domain to another. 
+
+Requires a configuration file describing the numa layout. Numa layout configuration has the following format: Each numa domain is described by 1 line. The first number is the NUMA ID followed by a tab. The cores belonging to that domain are then listed separated by a single comma
+
+Format:
+node\tcore,core,core,...
+node\tcore,core,core,...
+
+See quatchi.config for an example configuration file.
+
+Output is tab deliminated with header.
+
+Header:
+frame\tsourceNode\tdestNode\treads\twrites
+
+example
+
+zcat *.dat.gz | ./summarizeInterconnect quatchi.config
+
+

@@ -42,13 +42,18 @@ END_LEGAL */
  * format is as follows:
  *
  * Each line will contain tab deliminated data of
- * either 3 items or 4. If there are 3 items, the format is
+ * 4 integer values. Time stamps have the format:
  *
- * CPU_ID	SEC	NSEC
+ * CPU_ID	SEC	NSEC	-1
  *
- * If there are 4 items, the format is
+ * Page entry format is
  *
  * PAGE_ID	NUMA_ID	#READS	#WRITES
+ * 
+ * The very first line will contain the thread id ranging
+ * from 0-N witht the following format:
+ * 
+ * TID	-1	-1	-1
  * 
  * The tool can be compiled to make use of a compressed
  * file stream by defining the COMPRESS_STREAM flag
