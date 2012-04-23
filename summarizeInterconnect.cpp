@@ -23,7 +23,7 @@ using namespace std;
 typedef unsigned long long pageID_t;
 typedef int timeWindow_t;
 typedef uint Core_t;
-typedef	uint Node_t;
+typedef	int Node_t;
 struct readWrite_t{
     uint reads;
     uint writes;
@@ -54,8 +54,11 @@ map<Node_t, readWrite_t>* activeSourceNode(NULL);
 
 void processMemoryEntry(pageID_t page, Node_t numaID, int reads, int writes) {
     assert(activeSourceNode != NULL && "time window not set");
-    (*activeSourceNode)[numaID].writes += writes;
-    (*activeSourceNode)[numaID].reads += reads;
+    const Node_t NUMA_ERROR{-14}; 
+	if (numaID != NUMA_ERROR) {
+		(*activeSourceNode)[numaID].writes += writes;
+		(*activeSourceNode)[numaID].reads += reads;
+	}
 }
 
 void processThreadEntry(int pid) {
