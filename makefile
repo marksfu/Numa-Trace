@@ -31,19 +31,19 @@ endif
 
 ifeq ($(TARGET_COMPILER),gnu)
     include ../makefile.gnu.config
-    CXXFLAGS ?= -O3 -Wall -Wno-unknown-pragmas $(DBG) $(OPT) -MMD
+    CXXFLAGS ?= -O3 -g -Wall -Wno-unknown-pragmas $(DBG) $(OPT) -MMD
 	BIGBINARYFLAGS ?= 
 endif
 
 SPECIALRUN = 
-NORMALRUN = numatrace directMemRatio
+NORMALRUN = numatrace
 TOOL_ROOTS = $(SPECIALRUN) $(NORMALRUN)
 
 TOOLS = $(TOOL_ROOTS:%=$(OBJDIR)%$(PINTOOL_SUFFIX))
 
 SANITY_TOOLS = 
 
-all: tools pageReadWriteSummary summarizeInterconnect
+all: tools pageReadWriteSummary summarizeInterconnect pageReadWriteDetailed
 tools: $(OBJDIR) $(TOOLS) 
 test: $(OBJDIR) $(TOOL_ROOTS:%=%.test)
 #tests-sanity: $(OBJDIR) $(SANITY_TOOLS:%=%.test)
